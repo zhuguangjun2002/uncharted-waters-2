@@ -1,4 +1,5 @@
 import type { State, ProvisionsType } from './state';
+import type { Position } from '../types';
 
 interface UpdateInterface {
   general: (
@@ -9,6 +10,7 @@ interface UpdateInterface {
   indicators: (indicators: Pick<State, 'wind' | 'current'>) => void;
   playerFleetDirection: (direction: number) => void;
   playerFleetSpeed: (speed: number) => void;
+  worldMap: (worldMap: { visible: boolean; position: Position }) => void;
   fade: (onComplete: () => void) => void;
 }
 

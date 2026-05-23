@@ -6,11 +6,13 @@ import Left from './Left';
 import PortInfo from './port/PortInfo';
 import Provisions from './world/Provisions';
 import Indicators from './world/Indicators';
+import WorldMap from './world/WorldMap';
 import Camera from './Camera';
 import updateInterface from '../state/updateInterface';
 import Building from './port/Building';
 import { classNames } from './interfaceUtils';
 import useFade from './port/hooks/useFade';
+import type { Position } from '../types';
 
 import './global.css';
 
@@ -31,6 +33,13 @@ function Interface({ resolve }: Props) {
   const [buildingId, setBuildingId] = useState<string | null>(null);
   const [timePassed, setTimePassed] = useState(0);
   const [gold, setGold] = useState(0);
+  const [worldMap, setWorldMap] = useState<{
+    visible: boolean;
+    position: Position;
+  }>({
+    visible: false,
+    position: { x: 0, y: 0 },
+  });
 
   useEffect(() => {
     resolve();
@@ -42,6 +51,8 @@ function Interface({ resolve }: Props) {
     setTimePassed(general.timePassed);
     setGold(general.gold);
   };
+
+  updateInterface.worldMap = setWorldMap;
 
   const { fade, onAnimationEnd } = useFade();
 
@@ -70,6 +81,7 @@ function Interface({ resolve }: Props) {
           <div className={buildingId ? 'hidden' : ''}>
             <Camera />
           </div>
+          {worldMap.visible && <WorldMap position={worldMap.position} />}
         </div>
         <Right>
           {inPort && <PortInfo portId={portId} />}

@@ -54,12 +54,18 @@ const isMovementKey = (key: string): key is MovementKey =>
 let pressedMovementKeys: MovementKey[] = [];
 
 let pressedE = false;
+let pressedF4 = false;
 
 const PRESSED_E_TIME_MARGIN = 250;
 let pressedETimeoutId: number;
 
 const onKeydown = (e: KeyboardEvent) => {
   const pressedKey = e.key.toLowerCase();
+
+  if (pressedKey === 'f4' && !e.repeat) {
+    e.preventDefault();
+    pressedF4 = true;
+  }
 
   if (isMovementKey(pressedKey) && !pressedMovementKeys.includes(pressedKey)) {
     e.preventDefault();
@@ -114,10 +120,16 @@ const Input = {
     return pressedDirections[0];
   },
   getPressedE: () => pressedE,
+  getPressedF4: () => {
+    const wasPressed = pressedF4;
+    pressedF4 = false;
+    return wasPressed;
+  },
   reset: () => {
     pressedMovementKeys = [];
 
     pressedE = false;
+    pressedF4 = false;
 
     window.clearTimeout(pressedETimeoutId);
   },

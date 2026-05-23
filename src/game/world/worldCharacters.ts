@@ -7,10 +7,11 @@ import state from '../../state/state';
 import type { Ship } from './fleets';
 import { hasOars } from './worldUtils';
 import { dock } from '../../state/actionsWorld';
+import updateInterface from '../../state/updateInterface';
 
 const FRAMES_PER_SHIP = 8;
 const SHIP_VARIANTS = 2;
-const PLAYER_SPEED_MULTIPLIER = 3;
+const PLAYER_SPEED_MULTIPLIER = 1;
 
 export const getStartFrame = (flagship: Ship, isPlayer = false) => {
   const startFrame = hasOars(flagship.id) ? 0 : FRAMES_PER_SHIP;
@@ -20,6 +21,7 @@ export const getStartFrame = (flagship: Ship, isPlayer = false) => {
 
 const createWorldCharacters = (map: Map) => {
   const playerFleet = state.fleets[1];
+  let worldMapVisible = false;
 
   if (!playerFleet.position) {
     throw Error('Player fleet has no position');
@@ -53,6 +55,22 @@ const createWorldCharacters = (map: Map) => {
       if (Input.getPressedE() && dock(player.position())) {
         player.setHeading('');
         return;
+      }
+
+      if (Input.getPressedF4()) {
+        worldMapVisible = !worldMapVisible;
+      }
+
+      if (worldMapVisible) {
+        updateInterface.worldMap({
+          visible: true,
+          position: player.position(),
+        });
+      } else {
+        updateInterface.worldMap({
+          visible: false,
+          position: player.position(),
+        });
       }
 
       const direction = Input.getDirection({ includeOrdinal: true });

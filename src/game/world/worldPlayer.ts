@@ -132,7 +132,7 @@ const createWorldPlayer = (
 
       lastHeading = heading;
       lastWind = state.wind;
-      updateInterface.playerFleetSpeed(speed);
+      updateInterface.playerFleetSpeed(speed * speedMultiplier);
     },
     frame: () => startFrame + frameOffset + frameAlternate,
     width: 2,

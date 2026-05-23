@@ -74,11 +74,11 @@ const state = {
           cargo: [
             {
               type: 'water',
-              quantity: 100,
+              quantity: 10,
             },
             {
               type: 'food',
-              quantity: 100,
+              quantity: 10,
             },
           ],
           durability: 30,
