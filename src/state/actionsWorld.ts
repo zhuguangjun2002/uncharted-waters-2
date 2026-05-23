@@ -45,7 +45,7 @@ export const dock = (position: Position) => {
   return true;
 };
 
-const updateProvisions = () => {
+export const updateProvisions = () => {
   const provisions = {
     water: 0,
     food: 0,
@@ -112,11 +112,7 @@ export const setDockedFleetPositions = () => {
   const playerFleet = state.fleets[1];
 
   if (!playerFleet.position) {
-    if (state.portId === null) {
-      throw Error('Player fleet must start with a position if not in port');
-    }
-
-    playerFleet.position = positionAdjacentToPort(state.portId);
+    playerFleet.position = positionAdjacentToPort(state.portId || '1');
   }
 };
 

@@ -16,6 +16,7 @@ const createWorldPlayer = (
   startPosition: Position,
   startFrame: number,
   startDirection: CardinalDirection,
+  speedMultiplier = 1,
 ) => {
   let position = startPosition;
   let destination: Position | undefined;
@@ -56,7 +57,8 @@ const createWorldPlayer = (
       frameOffset = newFrameOffset;
 
       const isDiagonal = Math.abs(xDelta) > 0 && Math.abs(yDelta) > 0;
-      const multiplier = speed / 40 / (isDiagonal ? Math.SQRT2 : 1);
+      const multiplier =
+        (speed * speedMultiplier) / 40 / (isDiagonal ? Math.SQRT2 : 1);
 
       if (!isDiagonal) {
         destination = calculateDestination(

@@ -1,12 +1,24 @@
 import { CardinalDirection, Direction, OrdinalDirection } from './types';
 
-type Wasd = 'w' | 'a' | 's' | 'd';
+type MovementKey =
+  | 'w'
+  | 'a'
+  | 's'
+  | 'd'
+  | 'arrowup'
+  | 'arrowright'
+  | 'arrowdown'
+  | 'arrowleft';
 
-const cardinalKeyMap: { [key in Wasd]: CardinalDirection } = {
+const cardinalKeyMap: { [key in MovementKey]: CardinalDirection } = {
   w: 'n',
   d: 'e',
   s: 's',
   a: 'w',
+  arrowup: 'n',
+  arrowright: 'e',
+  arrowdown: 's',
+  arrowleft: 'w',
 };
 
 const ordinalKeyMap: {
@@ -14,13 +26,13 @@ const ordinalKeyMap: {
     [key: string]: OrdinalDirection;
   };
 } = {
-  w: {
-    d: 'ne',
-    a: 'nw',
+  n: {
+    e: 'ne',
+    w: 'nw',
   },
   s: {
-    d: 'se',
-    a: 'sw',
+    e: 'se',
+    w: 'sw',
   },
 };
 
@@ -36,9 +48,10 @@ export const directionMap: { [key in Direction | '']: number } = {
   '': 8,
 };
 
-const isWasd = (key: string): key is Wasd => key in cardinalKeyMap;
+const isMovementKey = (key: string): key is MovementKey =>
+  key in cardinalKeyMap;
 
-let pressedWasd: Wasd[] = [];
+let pressedMovementKeys: MovementKey[] = [];
 
 let pressedE = false;
 
@@ -48,16 +61,20 @@ let pressedETimeoutId: number;
 const onKeydown = (e: KeyboardEvent) => {
   const pressedKey = e.key.toLowerCase();
 
-  if (isWasd(pressedKey) && !pressedWasd.includes(pressedKey)) {
-    pressedWasd.unshift(pressedKey);
+  if (isMovementKey(pressedKey) && !pressedMovementKeys.includes(pressedKey)) {
+    e.preventDefault();
+    pressedMovementKeys.unshift(pressedKey);
   }
 };
 
 const onKeyup = (e: KeyboardEvent) => {
   const pressedKey = e.key.toLowerCase();
 
-  if (isWasd(pressedKey)) {
-    pressedWasd = pressedWasd.filter((key) => key !== pressedKey);
+  if (isMovementKey(pressedKey)) {
+    e.preventDefault();
+    pressedMovementKeys = pressedMovementKeys.filter(
+      (key) => key !== pressedKey,
+    );
   }
 
   if (pressedKey === 'e') {
@@ -76,25 +93,29 @@ const Input = {
     document.addEventListener('keyup', onKeyup);
   },
   getDirection: (options: { includeOrdinal: boolean }): Direction | '' => {
-    if (!pressedWasd.length) {
+    const pressedDirections = pressedMovementKeys.map(
+      (key) => cardinalKeyMap[key],
+    );
+
+    if (!pressedDirections.length) {
       return '';
     }
 
-    if (options.includeOrdinal && pressedWasd.length > 1) {
+    if (options.includeOrdinal && pressedDirections.length > 1) {
       const direction =
-        ordinalKeyMap[pressedWasd[0]]?.[pressedWasd[1]] ||
-        ordinalKeyMap[pressedWasd[1]]?.[pressedWasd[0]];
+        ordinalKeyMap[pressedDirections[0]]?.[pressedDirections[1]] ||
+        ordinalKeyMap[pressedDirections[1]]?.[pressedDirections[0]];
 
       if (direction) {
         return direction;
       }
     }
 
-    return cardinalKeyMap[pressedWasd[0]];
+    return pressedDirections[0];
   },
   getPressedE: () => pressedE,
   reset: () => {
-    pressedWasd = [];
+    pressedMovementKeys = [];
 
     pressedE = false;
 

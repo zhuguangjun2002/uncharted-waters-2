@@ -6,7 +6,11 @@ import createPort from './game/port/port';
 
 import state from './state/state';
 import { updateGeneral } from './state/actionsPort';
-import { setDockedFleetPositions } from './state/actionsWorld';
+import {
+  setDockedFleetPositions,
+  updateProvisions,
+  updateWorldStatus,
+} from './state/actionsWorld';
 
 const start = async () => {
   await Assets.load();
@@ -17,6 +21,11 @@ const start = async () => {
   updateGeneral();
 
   setDockedFleetPositions();
+
+  if (state.portId === null) {
+    updateWorldStatus();
+    updateProvisions();
+  }
 
   const loop = () => {
     if (state.portId !== null) {

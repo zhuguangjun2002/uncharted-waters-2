@@ -10,6 +10,7 @@ import { dock } from '../../state/actionsWorld';
 
 const FRAMES_PER_SHIP = 8;
 const SHIP_VARIANTS = 2;
+const PLAYER_SPEED_MULTIPLIER = 3;
 
 export const getStartFrame = (flagship: Ship, isPlayer = false) => {
   const startFrame = hasOars(flagship.id) ? 0 : FRAMES_PER_SHIP;
@@ -28,6 +29,7 @@ const createWorldCharacters = (map: Map) => {
     playerFleet.position,
     getStartFrame(playerFleet.ships[0], true),
     'n',
+    PLAYER_SPEED_MULTIPLIER,
   );
 
   const npcs: WorldNpc[] = [];

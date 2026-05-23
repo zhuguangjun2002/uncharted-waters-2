@@ -59,10 +59,33 @@ const savedState = JSON.parse(
 );
 
 const state = {
-  portId: '1',
+  portId: null,
   buildingId: null,
   timePassed: START_TIME_PASSED,
-  fleets,
+  fleets: {
+    ...fleets,
+    '1': {
+      position: undefined,
+      ships: [
+        {
+          id: '6',
+          name: 'Sea Trial',
+          crew: 10,
+          cargo: [
+            {
+              type: 'water',
+              quantity: 100,
+            },
+            {
+              type: 'food',
+              quantity: 100,
+            },
+          ],
+          durability: 30,
+        },
+      ],
+    },
+  },
   dayAtSea: 0,
   gold: 0,
   quests: [] as QuestId[],
@@ -73,7 +96,7 @@ const state = {
   mates: [
     {
       sailorId: '1',
-      role: null,
+      role: 0,
     },
   ] as Mate[],
   ...savedState,

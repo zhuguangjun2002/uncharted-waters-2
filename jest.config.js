@@ -5,7 +5,7 @@ module.exports = {
     '\\.tsx?$': '@swc/jest',
   },
   moduleNameMapper: {
-    '\\.(png|bin|ogg|mp3)$': 'identity-obj-proxy',
+    '\\.(png|bin|wasm|ogg|mp3)$': 'identity-obj-proxy',
   },
   testEnvironment: 'jsdom',
   testMatch: ['**/*.test.{ts,tsx}'],
