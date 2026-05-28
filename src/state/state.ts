@@ -38,6 +38,9 @@ export interface AutoNavigationState {
   targetPosition: Position | null;
   path: Position[];
   waypointIndex: number;
+  lastPosition: Position | null;
+  stagnantMoves: number;
+  useAlternateAxis: boolean;
 }
 
 export interface State {
@@ -74,6 +77,9 @@ export const getDefaultAutoNavigation = (): AutoNavigationState => ({
   targetPosition: null,
   path: [],
   waypointIndex: 0,
+  lastPosition: null,
+  stagnantMoves: 0,
+  useAlternateAxis: false,
 });
 
 const state = {

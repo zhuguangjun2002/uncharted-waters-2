@@ -64,6 +64,9 @@ export const startAutoNavigation = (
     targetPosition,
     path,
     waypointIndex: 0,
+    lastPosition: null,
+    stagnantMoves: 0,
+    useAlternateAxis: false,
   };
 
   return 'started';
@@ -74,12 +77,19 @@ export const updateAutoNavigation = (position: Position): Direction | '' => {
     return '';
   }
 
-  const { heading, waypointIndex, arrived } = getAutoNavigationHeading(
-    position,
-    state.autoNavigation,
-  );
+  const {
+    heading,
+    waypointIndex,
+    arrived,
+    lastPosition,
+    stagnantMoves,
+    useAlternateAxis,
+  } = getAutoNavigationHeading(position, state.autoNavigation);
 
   state.autoNavigation.waypointIndex = waypointIndex;
+  state.autoNavigation.lastPosition = lastPosition;
+  state.autoNavigation.stagnantMoves = stagnantMoves;
+  state.autoNavigation.useAlternateAxis = useAlternateAxis;
 
   if (arrived) {
     cancelAutoNavigation();

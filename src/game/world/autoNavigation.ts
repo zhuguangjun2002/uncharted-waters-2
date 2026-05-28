@@ -8,9 +8,14 @@ import {
 } from './sharedUtils';
 
 const WORLD_MAP_ROWS = 1080;
-const DEFAULT_GRID_SIZE = 4;
-const REACHED_WAYPOINT_DISTANCE = DEFAULT_GRID_SIZE / 2;
+const DEFAULT_GRID_SIZE = 8;
+const FINE_GRID_SIZE = 4;
+const REACHED_WAYPOINT_DISTANCE = DEFAULT_GRID_SIZE * 4;
+const REACHED_TARGET_DISTANCE = 8;
 const DIRECTION_DEAD_ZONE = 1;
+const COAST_PENALTY_RADIUS = 16;
+const STAGNANT_MOVE_DISTANCE = 0.001;
+const STAGNANT_MOVES_BEFORE_ALTERNATE_AXIS = 12;
 
 interface GridPosition {
   x: number;
@@ -104,6 +109,38 @@ const reconstructPath = (
   return path;
 };
 
+const getCoastPenalty = (
+  { x, y }: Position,
+  isSea: (position: Position) => boolean,
+) => {
+  for (let radius = 1; radius <= COAST_PENALTY_RADIUS; radius += 1) {
+    for (let yOffset = -radius; yOffset <= radius; yOffset += 1) {
+      for (let xOffset = -radius; xOffset <= radius; xOffset += 1) {
+        const isPerimeter =
+          Math.abs(xOffset) === radius || Math.abs(yOffset) === radius;
+
+        if (isPerimeter && !isSea({ x: x + xOffset, y: y + yOffset })) {
+          if (radius <= 3) {
+            return 20;
+          }
+
+          if (radius <= 6) {
+            return 8;
+          }
+
+          if (radius <= 10) {
+            return 3;
+          }
+
+          return 1;
+        }
+      }
+    }
+  }
+
+  return 0;
+};
+
 export const isWorldSea = ({ x, y }: Position) => {
   if (y < 0 || y + 1 >= WORLD_MAP_ROWS) {
     return false;
@@ -151,6 +188,7 @@ export const findSeaPath = ({
     [gridKey(startGrid), getHeuristic(startGrid, targetGrid, gridColumns)],
   ]);
   const seaCache = new Map<string, boolean>();
+  const coastPenaltyCache = new Map<string, number>();
 
   const isGridSea = (gridPosition: GridPosition) => {
     const key = gridKey(gridPosition);
@@ -164,6 +202,23 @@ export const findSeaPath = ({
     seaCache.set(key, sea);
 
     return sea;
+  };
+
+  const getGridCoastPenalty = (gridPosition: GridPosition) => {
+    const key = gridKey(gridPosition);
+    const cached = coastPenaltyCache.get(key);
+
+    if (cached !== undefined) {
+      return cached;
+    }
+
+    const penalty = getCoastPenalty(
+      gridToPosition(gridPosition, columns, rows, gridSize),
+      isSea,
+    );
+    coastPenaltyCache.set(key, penalty);
+
+    return penalty;
   };
 
   while (openSet.length) {
@@ -203,7 +258,8 @@ export const findSeaPath = ({
         if (shouldCheckNeighbor && isInBounds && isAllowedSeaNode) {
           const tentativeGScore =
             (gScore.get(currentKey) ?? Infinity) +
-            (xDelta !== 0 && yDelta !== 0 ? Math.SQRT2 : 1);
+            (xDelta !== 0 && yDelta !== 0 ? Math.SQRT2 : 1) +
+            getGridCoastPenalty(neighbor);
 
           if (tentativeGScore < (gScore.get(neighborKey) ?? Infinity)) {
             cameFrom.set(neighborKey, currentKey);
@@ -235,24 +291,42 @@ const getDistance = (from: Position, to: Position) => {
   return Math.sqrt(dx * dx + dy * dy);
 };
 
+const getReachedDistance = (
+  waypointIndex: number,
+  autoNavigation: AutoNavigationState,
+) =>
+  waypointIndex === autoNavigation.path.length - 1
+    ? REACHED_TARGET_DISTANCE
+    : REACHED_WAYPOINT_DISTANCE;
+
 export const getDirectionToPosition = (
   from: Position,
   to: Position,
+  useAlternateAxis = false,
 ): Direction | '' => {
   const xDelta = getFromToAccountingForWrapAround(from.x, to.x);
   const yDelta = to.y - from.y;
-  let x = '';
-  let y = '';
+  const xDirection = xDelta > 0 ? 'e' : 'w';
+  const yDirection = yDelta > 0 ? 's' : 'n';
 
-  if (Math.abs(xDelta) > DIRECTION_DEAD_ZONE) {
-    x = xDelta > 0 ? 'e' : 'w';
+  if (Math.abs(xDelta) <= DIRECTION_DEAD_ZONE) {
+    return Math.abs(yDelta) <= DIRECTION_DEAD_ZONE ? '' : yDirection;
   }
 
-  if (Math.abs(yDelta) > DIRECTION_DEAD_ZONE) {
-    y = yDelta > 0 ? 's' : 'n';
+  if (Math.abs(yDelta) <= DIRECTION_DEAD_ZONE) {
+    return xDirection;
   }
 
-  return `${y}${x}` as Direction | '';
+  const primaryDirection =
+    Math.abs(xDelta) >= Math.abs(yDelta) ? xDirection : yDirection;
+  const alternateDirection =
+    primaryDirection === xDirection ? yDirection : xDirection;
+
+  if (useAlternateAxis) {
+    return alternateDirection;
+  }
+
+  return primaryDirection;
 };
 
 export const getAutoNavigationHeading = (
@@ -260,11 +334,27 @@ export const getAutoNavigationHeading = (
   autoNavigation: AutoNavigationState,
 ) => {
   let { waypointIndex } = autoNavigation;
+  let stagnantMoves = autoNavigation.stagnantMoves || 0;
+  let useAlternateAxis = autoNavigation.useAlternateAxis || false;
+
+  if (
+    autoNavigation.lastPosition &&
+    getDistance(position, autoNavigation.lastPosition) < STAGNANT_MOVE_DISTANCE
+  ) {
+    stagnantMoves += 1;
+  } else {
+    stagnantMoves = 0;
+    useAlternateAxis = false;
+  }
+
+  if (stagnantMoves >= STAGNANT_MOVES_BEFORE_ALTERNATE_AXIS) {
+    useAlternateAxis = true;
+  }
 
   while (
     waypointIndex < autoNavigation.path.length &&
     getDistance(position, autoNavigation.path[waypointIndex]) <=
-      REACHED_WAYPOINT_DISTANCE
+      getReachedDistance(waypointIndex, autoNavigation)
   ) {
     waypointIndex += 1;
   }
@@ -274,6 +364,9 @@ export const getAutoNavigationHeading = (
       heading: '' as Direction | '',
       waypointIndex,
       arrived: true,
+      lastPosition: position,
+      stagnantMoves,
+      useAlternateAxis,
     };
   }
 
@@ -281,15 +374,31 @@ export const getAutoNavigationHeading = (
     heading: getDirectionToPosition(
       position,
       autoNavigation.path[waypointIndex],
+      useAlternateAxis,
     ),
     waypointIndex,
     arrived: false,
+    lastPosition: position,
+    stagnantMoves,
+    useAlternateAxis,
   };
 };
 
-export const createAutoNavigationPath = (start: Position, target: Position) =>
-  findSeaPath({
+export const createAutoNavigationPath = (start: Position, target: Position) => {
+  const path = findSeaPath({
     start,
     target,
     isSea: isWorldSea,
   });
+
+  if (path.length) {
+    return path;
+  }
+
+  return findSeaPath({
+    start,
+    target,
+    isSea: isWorldSea,
+    gridSize: FINE_GRID_SIZE,
+  });
+};
