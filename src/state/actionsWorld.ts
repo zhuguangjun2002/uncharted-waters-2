@@ -1,9 +1,13 @@
-import state from './state';
+import state, { getDefaultAutoNavigation } from './state';
 import { portAdjacentAt } from '../game/port/portUtils';
 import createPort from '../game/port/port';
 import Input from '../input';
 import updateInterface from './updateInterface';
 import { updateGeneral } from './actionsPort';
+import {
+  createAutoNavigationPath,
+  getAutoNavigationHeading,
+} from '../game/world/autoNavigation';
 import {
   getCurrent,
   getIsSummer,
@@ -16,7 +20,74 @@ import {
   positionAdjacentToPort,
   shouldUpdateWorldStatus,
 } from './selectors';
-import { Position } from '../types';
+import { Direction, Position } from '../types';
+import { getFromToAccountingForWrapAround } from '../game/world/sharedUtils';
+
+type AutoNavigationStartResult = 'started' | 'already-there' | 'no-path';
+
+const AUTO_NAVIGATION_TARGET_DISTANCE = 8;
+
+const distanceTo = (from: Position, to: Position) => {
+  const x = getFromToAccountingForWrapAround(from.x, to.x);
+  const y = to.y - from.y;
+
+  return Math.sqrt(x * x + y * y);
+};
+
+export const cancelAutoNavigation = () => {
+  state.autoNavigation = getDefaultAutoNavigation();
+};
+
+export const startAutoNavigation = (
+  targetPortId: string,
+  startPosition: Position,
+): AutoNavigationStartResult => {
+  const targetPosition = positionAdjacentToPort(targetPortId);
+
+  if (
+    distanceTo(startPosition, targetPosition) <= AUTO_NAVIGATION_TARGET_DISTANCE
+  ) {
+    cancelAutoNavigation();
+    return 'already-there';
+  }
+
+  const path = createAutoNavigationPath(startPosition, targetPosition);
+
+  if (!path.length) {
+    cancelAutoNavigation();
+    return 'no-path';
+  }
+
+  state.autoNavigation = {
+    enabled: true,
+    targetPortId,
+    targetPosition,
+    path,
+    waypointIndex: 0,
+  };
+
+  return 'started';
+};
+
+export const updateAutoNavigation = (position: Position): Direction | '' => {
+  if (!state.autoNavigation.enabled) {
+    return '';
+  }
+
+  const { heading, waypointIndex, arrived } = getAutoNavigationHeading(
+    position,
+    state.autoNavigation,
+  );
+
+  state.autoNavigation.waypointIndex = waypointIndex;
+
+  if (arrived) {
+    cancelAutoNavigation();
+    return '';
+  }
+
+  return heading;
+};
 
 export const dock = (position: Position) => {
   const portId = portAdjacentAt(position);
@@ -36,6 +107,7 @@ export const dock = (position: Position) => {
   state.portId = portId;
 
   Input.reset();
+  cancelAutoNavigation();
 
   updateGeneral();
 

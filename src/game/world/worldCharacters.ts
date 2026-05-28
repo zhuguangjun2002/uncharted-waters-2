@@ -6,7 +6,11 @@ import createWorldNpc, { WorldNpc } from './worldNpc';
 import state from '../../state/state';
 import type { Ship } from './fleets';
 import { hasOars } from './worldUtils';
-import { dock } from '../../state/actionsWorld';
+import {
+  cancelAutoNavigation,
+  dock,
+  updateAutoNavigation,
+} from '../../state/actionsWorld';
 import updateInterface from '../../state/updateInterface';
 
 const FRAMES_PER_SHIP = 8;
@@ -65,11 +69,13 @@ const createWorldCharacters = (map: Map) => {
         updateInterface.worldMap({
           visible: true,
           position: player.position(),
+          autoNavigation: state.autoNavigation,
         });
       } else {
         updateInterface.worldMap({
           visible: false,
           position: player.position(),
+          autoNavigation: state.autoNavigation,
         });
       }
 
@@ -77,7 +83,10 @@ const createWorldCharacters = (map: Map) => {
 
       // this check allows the player to keep their heading even after releasing input
       if (direction) {
+        cancelAutoNavigation();
         player.setHeading(direction);
+      } else if (state.autoNavigation.enabled) {
+        player.setHeading(updateAutoNavigation(player.position()));
       }
 
       player.updateSpeed();

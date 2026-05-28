@@ -4,6 +4,7 @@ import type { Port } from '../game/port/port';
 import type { World } from '../game/world/world';
 import type { QuestId } from '../interface/quest/questData';
 import { ItemId } from '../data/itemData';
+import type { Position } from '../types';
 
 export type Stage = 'world' | 'port' | 'building';
 
@@ -31,6 +32,14 @@ type Mate = {
   role: Role;
 };
 
+export interface AutoNavigationState {
+  enabled: boolean;
+  targetPortId: string | null;
+  targetPosition: Position | null;
+  path: Position[];
+  waypointIndex: number;
+}
+
 export interface State {
   portId: string | null;
   buildingId: string | null;
@@ -50,6 +59,7 @@ export interface State {
   debt: number;
   items: ItemId[];
   mates: Mate[];
+  autoNavigation: AutoNavigationState;
 }
 
 export const SAVED_STATE_KEY = 'savedState';
@@ -57,6 +67,14 @@ export const SAVED_STATE_KEY = 'savedState';
 const savedState = JSON.parse(
   window.localStorage.getItem(SAVED_STATE_KEY) || '{}',
 );
+
+export const getDefaultAutoNavigation = (): AutoNavigationState => ({
+  enabled: false,
+  targetPortId: null,
+  targetPosition: null,
+  path: [],
+  waypointIndex: 0,
+});
 
 const state = {
   portId: null,
@@ -99,6 +117,7 @@ const state = {
       role: 0,
     },
   ] as Mate[],
+  autoNavigation: getDefaultAutoNavigation(),
   ...savedState,
 } as State;
 

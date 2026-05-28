@@ -13,6 +13,7 @@ import Building from './port/Building';
 import { classNames } from './interfaceUtils';
 import useFade from './port/hooks/useFade';
 import type { Position } from '../types';
+import { AutoNavigationState, getDefaultAutoNavigation } from '../state/state';
 
 import './global.css';
 
@@ -36,9 +37,11 @@ function Interface({ resolve }: Props) {
   const [worldMap, setWorldMap] = useState<{
     visible: boolean;
     position: Position;
+    autoNavigation: AutoNavigationState;
   }>({
     visible: false,
     position: { x: 0, y: 0 },
+    autoNavigation: getDefaultAutoNavigation(),
   });
 
   useEffect(() => {
@@ -81,7 +84,12 @@ function Interface({ resolve }: Props) {
           <div className={buildingId ? 'hidden' : ''}>
             <Camera />
           </div>
-          {worldMap.visible && <WorldMap position={worldMap.position} />}
+          {worldMap.visible && (
+            <WorldMap
+              position={worldMap.position}
+              autoNavigation={worldMap.autoNavigation}
+            />
+          )}
         </div>
         <Right>
           {inPort && <PortInfo portId={portId} />}

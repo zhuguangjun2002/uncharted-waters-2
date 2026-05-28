@@ -312,6 +312,190 @@ const markerY = Math.floor((y / WORLD_MAP_ROWS) * MAP_HEIGHT);
 - 如果浏览器、系统或笔记本键盘拦截功能键，可能需要先点击游戏画面获得焦点，或按
   `Fn + F4`。
 
+## 自动导航现状
+
+记录日期：2026-05-28
+
+当前代码没有实现原作那种“选择目的地后自动航行到目标港”的自动导航，也没有完整预留
+玩家自动导航接口。
+
+### 当前已有行为：保持航向
+
+海上航行时，玩家按方向键后，`worldCharacters.update()` 会读取
+`Input.getDirection({ includeOrdinal: true })`，并调用 `player.setHeading(direction)`。
+
+如果玩家松开方向键，代码不会主动清空 heading。因此船会继续沿最后一次输入方向航行：
+
+```ts
+const direction = Input.getDirection({ includeOrdinal: true });
+
+if (direction) {
+  player.setHeading(direction);
+}
+
+player.updateSpeed();
+
+const heading = player.heading();
+
+if (heading) {
+  player.move(heading, collision);
+}
+```
+
+这更接近“保持当前航向”的基础航行行为，不是自动导航到目标港。
+
+### `destination` 不是航线终点
+
+[src/game/world/worldPlayer.ts](/home/laozhu/project/uncharted-waters-2/src/game/world/worldPlayer.ts)
+中有 `destination` 字段，但它只表示下一次移动计算得到的短距离目标点：
+
+- `move()` 根据当前 heading、船速、风向、桨船/帆船差异和碰撞计算下一小段位置。
+- `update()` 把当前位置推进到这个短距离 `destination`。
+- `position(percentNextMove)` 用它做绘制插值。
+
+因此这个 `destination` 不是玩家选择的目的港，也不是跨地图航线。
+
+### NPC 也没有寻路
+
+[src/game/world/worldNpc.ts](/home/laozhu/project/uncharted-waters-2/src/game/world/worldNpc.ts)
+目前是随机方向移动或静止。`randomDirection()` 只是提高继续沿当前方向移动的概率，并不
+会朝某个港口或目标坐标寻路。
+
+README 的“后续考虑”里提到过“为 NPC fleets 增加 pathfinding”，说明原作者考虑过寻路，
+但目前还没有实现。
+
+### 缺失的自动导航状态
+
+如果要实现原作风格的自动导航，目前还缺这些状态和入口：
+
+- 自动导航开关。
+- 目标港或目标世界坐标。
+- 当前航线路径或下一段航向。
+- 目标选择 UI。
+- 自动导航过程中的停止/取消逻辑。
+- 到达目标港附近后的提示或自动靠港逻辑。
+
+### 实现切入点
+
+比较合适的实现方向：
+
+- 在 State 中新增类似 `autoNavigation` 的状态，保存目标港、目标坐标、当前路径和启用状态。
+- 在 `worldCharacters.update()` 中，如果自动导航启用，就由自动导航逻辑计算 heading；否则继续读取玩家方向输入。
+- 复用 `map.collisionAt()` 判断海陆障碍。
+- 复用 `portData.ts` 的港口坐标作为目的地数据来源。
+- 接近目标港时复用已有 `dock(player.position())`，或先显示到达提示再由玩家手动靠港。
+- 如果要在 F4 世界地图中展示航线，可以扩展 `WorldMap`，把目标点和路径按同样比例画到小图上。
+
+### MVP 实现计划
+
+第一版自动导航先做最小闭环：
+
+- 玩家在 F4 世界地图中选择目标港。
+- 系统规划一条到目标港附近的海上路径。
+- 船队自动沿路径航行。
+- 到达目标港附近后停止自动导航，并保留现有按 `E` 靠港行为。
+- 玩家手动按方向键时取消自动导航，把控制权还给玩家。
+
+暂不做这些扩展：
+
+- 多目标贸易路线。
+- 自动补给。
+- 自动进入港口建筑。
+- 根据风向/洋流动态优化航线。
+- NPC 舰队寻路。
+
+### 建议实现步骤
+
+1. 新增自动导航状态
+
+   在 State 中新增类似结构：
+
+   ```ts
+   autoNavigation: {
+     enabled: boolean;
+     targetPortId: string | null;
+     targetPosition: Position | null;
+     path: Position[];
+     waypointIndex: number;
+   }
+   ```
+
+   需要注意旧存档兼容：读取 `localStorage` 旧存档时，如果没有 `autoNavigation`，应使用默认值。
+
+2. 实现寻路
+
+   世界地图是 `2160 x 1080`，逐 tile A\* 搜索成本较高。第一版可以使用粗网格：
+
+   - 每 `6 x 6` 或 `8 x 8` 个 world tile 合成一个路径节点。
+   - 节点可航行性通过 `worldTilemap` 或 `map.collisionAt()` 判断。
+   - x 方向必须支持环绕，避免跨太平洋航线绕远路。
+   - 输出路径时再把粗网格节点换算回 world tile 坐标。
+
+3. 接入航行控制
+
+   在 `worldCharacters.update()` 中调整 heading 来源：
+
+   - 如果玩家按了方向键，取消自动导航并使用玩家输入。
+   - 如果自动导航启用，自动导航逻辑根据当前 waypoint 计算 `n/e/s/w/ne/se/sw/nw`。
+   - 如果没有自动导航，保留当前“保持航向”行为。
+
+4. 接入 F4 世界地图
+
+   扩展 `WorldMap`：
+
+   - 显示目标港选择入口。
+   - 显示当前目标港。
+   - 显示取消自动导航入口。
+   - 在小图上画目标点和路径。
+
+5. 到达处理
+
+   当玩家位置接近目标港坐标时：
+
+   - 停止自动导航。
+   - 将 heading 清空，让船停下。
+   - 第一版不自动进港，沿用当前按 `E` 靠港。
+
+6. 测试重点
+
+   - 从地图东西两侧之间导航时使用 x 方向环绕。
+   - 规划出的路径不穿过陆地。
+   - 到达目标港附近后自动导航停止。
+   - 手动方向输入会取消自动导航。
+   - 旧存档没有 `autoNavigation` 字段时仍能启动。
+
+### Bug 记录：Lisbon 到 Barcelona 无法规划航线
+
+记录日期：2026-05-28
+
+问题现象：
+
+- 玩家从 Lisbon 附近出海。
+- 打开 F4 世界地图。
+- 选择 `4. Barcelona`。
+- 点击“自动导航”。
+- 界面提示“无法规划到 Barcelona 的海上航线”。
+
+原因：
+
+- 第一版自动导航使用 `12 x 12` world tile 的粗网格做 A* 寻路。
+- Lisbon 到 Barcelona 需要经过近岸和狭窄海域，尤其是直布罗陀/西地中海入口附近。
+- `12 x 12` 粗网格节点中心点容易落在陆地或近岸碰撞格上，把实际可通行海路误判为堵塞。
+- 因此 A* 搜索不到从 Lisbon 附近海面到 Barcelona 附近海面的连通路径。
+
+修复方法：
+
+- 将自动导航默认寻路网格从 `12 x 12` 调整为 `4 x 4`。
+- 更细的网格能表示近岸和海峡里的可通行水道，Barcelona 这类目标港可以正常规划。
+- 相关常量在
+  [src/game/world/autoNavigation.ts](/home/laozhu/project/uncharted-waters-2/src/game/world/autoNavigation.ts)
+  中的 `DEFAULT_GRID_SIZE`。
+
+验证：
+
+- `npm run lint`
+- `npm test -- --runInBand src/game/world/autoNavigation.test.ts`
+
 ## 新增功能应该改哪里？
 
 ### 新增一个 port building 行为
