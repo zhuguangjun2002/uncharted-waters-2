@@ -134,6 +134,92 @@ const getHeuristic = (
   return diagonal * Math.SQRT2 + straight;
 };
 
+interface HeapEntry {
+  position: GridPosition;
+  key: string;
+  fScore: number;
+  sequence: number;
+}
+
+const heapEntryLessThan = (a: HeapEntry, b: HeapEntry) =>
+  a.fScore - b.fScore || a.sequence - b.sequence;
+
+const createOpenHeap = () => {
+  const heap: HeapEntry[] = [];
+
+  const swap = (a: number, b: number) => {
+    const tmp = heap[a];
+
+    heap[a] = heap[b];
+    heap[b] = tmp;
+  };
+
+  return {
+    get size() {
+      return heap.length;
+    },
+
+    push(entry: HeapEntry) {
+      heap.push(entry);
+
+      let index = heap.length - 1;
+
+      while (index > 0) {
+        const parent = Math.floor((index - 1) / 2);
+
+        if (heapEntryLessThan(heap[index], heap[parent]) >= 0) {
+          return;
+        }
+
+        swap(index, parent);
+        index = parent;
+      }
+    },
+
+    pop() {
+      const top = heap[0];
+      const last = heap.pop()!;
+
+      if (heap.length) {
+        heap[0] = last;
+
+        const size = heap.length;
+        let index = 0;
+        let done = false;
+
+        while (!done) {
+          const left = index * 2 + 1;
+          const right = index * 2 + 2;
+          let smallest = index;
+
+          if (
+            left < size &&
+            heapEntryLessThan(heap[left], heap[smallest]) < 0
+          ) {
+            smallest = left;
+          }
+
+          if (
+            right < size &&
+            heapEntryLessThan(heap[right], heap[smallest]) < 0
+          ) {
+            smallest = right;
+          }
+
+          if (smallest === index) {
+            done = true;
+          } else {
+            swap(index, smallest);
+            index = smallest;
+          }
+        }
+      }
+
+      return top;
+    },
+  };
+};
+
 const reconstructPath = (
   cameFrom: Map<string, string>,
   currentKey: string,
@@ -225,18 +311,26 @@ export const findSeaPath = ({
   const gridRows = getGridRows(rows, gridSize);
   const startGrid = positionToGrid(start, columns, rows, gridSize);
   const targetGrid = positionToGrid(target, columns, rows, gridSize);
+  const startKey = gridKey(startGrid);
   const targetKey = gridKey(targetGrid);
 
-  const openSet = [startGrid];
+  const openHeap = createOpenHeap();
+  let heapSequence = 0;
+
+  openHeap.push({
+    position: startGrid,
+    key: startKey,
+    fScore: getHeuristic(startGrid, targetGrid, gridColumns),
+    sequence: heapSequence,
+  });
+  heapSequence += 1;
+
   const cameFrom = new Map<string, string>();
   const positions = new Map<string, GridPosition>([
-    [gridKey(startGrid), startGrid],
+    [startKey, startGrid],
     [targetKey, targetGrid],
   ]);
-  const gScore = new Map<string, number>([[gridKey(startGrid), 0]]);
-  const fScore = new Map<string, number>([
-    [gridKey(startGrid), getHeuristic(startGrid, targetGrid, gridColumns)],
-  ]);
+  const gScore = new Map<string, number>([[startKey, 0]]);
   const closedSet = new Set<string>();
   const seaCache = new Map<string, boolean>();
   const coastPenaltyCache = new Map<string, number>();
@@ -273,19 +367,11 @@ export const findSeaPath = ({
     return penalty;
   };
 
-  while (openSet.length && searchedNodes < maxSearchedNodes) {
-    searchedNodes += 1;
-
-    openSet.sort(
-      (a, b) =>
-        (fScore.get(gridKey(a)) ?? Infinity) -
-        (fScore.get(gridKey(b)) ?? Infinity),
-    );
-
-    const current = openSet.shift()!;
-    const currentKey = gridKey(current);
+  while (openHeap.size && searchedNodes < maxSearchedNodes) {
+    const { position: current, key: currentKey } = openHeap.pop();
 
     if (!closedSet.has(currentKey)) {
+      searchedNodes += 1;
       closedSet.add(currentKey);
 
       if (currentKey === targetKey) {
@@ -314,7 +400,7 @@ export const findSeaPath = ({
           const neighborKey = gridKey(neighbor);
           const isAllowedSeaNode =
             neighborKey === targetKey ||
-            neighborKey === gridKey(startGrid) ||
+            neighborKey === startKey ||
             isGridSea(neighbor);
           const isInBounds = neighbor.y >= 0 && neighbor.y < gridRows;
 
@@ -333,17 +419,15 @@ export const findSeaPath = ({
               cameFrom.set(neighborKey, currentKey);
               positions.set(neighborKey, neighbor);
               gScore.set(neighborKey, tentativeGScore);
-              fScore.set(
-                neighborKey,
-                tentativeGScore +
+              openHeap.push({
+                position: neighbor,
+                key: neighborKey,
+                fScore:
+                  tentativeGScore +
                   getHeuristic(neighbor, targetGrid, gridColumns),
-              );
-
-              if (
-                !openSet.some((position) => gridKey(position) === neighborKey)
-              ) {
-                openSet.push(neighbor);
-              }
+                sequence: heapSequence,
+              });
+              heapSequence += 1;
             }
           }
         }
@@ -479,6 +563,18 @@ export const createAutoNavigationPath = (
   );
 };
 
+const getPreviewGridBudgetMultiplier = (gridSize: number) => {
+  if (gridSize >= COARSE_GRID_SIZE) {
+    return 5;
+  }
+
+  if (gridSize >= DEFAULT_GRID_SIZE) {
+    return 8;
+  }
+
+  return 2;
+};
+
 export const createAutoNavigationPaths = (
   start: Position,
   target: Position,
@@ -487,6 +583,7 @@ export const createAutoNavigationPaths = (
   useCoastPenalty = false,
 ) => {
   const pathsByGridSize = new Map<number, Position[]>();
+  const isBounded = Number.isFinite(maxSearchedNodes);
 
   return strategyIds.reduce<
     Partial<Record<AutoNavigationStrategyId, Position[]>>
@@ -506,7 +603,9 @@ export const createAutoNavigationPaths = (
               target,
               isSea: isWorldSea,
               gridSize,
-              maxSearchedNodes,
+              maxSearchedNodes: isBounded
+                ? maxSearchedNodes * getPreviewGridBudgetMultiplier(gridSize)
+                : maxSearchedNodes,
               useCoastPenalty,
             }),
           );

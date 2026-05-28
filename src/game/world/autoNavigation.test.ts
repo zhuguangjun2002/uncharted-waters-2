@@ -306,4 +306,118 @@ describe('auto navigation simulation', () => {
 
     expect(paths.balanced?.length || 0).toBeGreaterThan(0);
   });
+
+  test('Lisbon to Mombasa preview at production budget finds offshore and balanced routes', () => {
+    const paths = createAutoNavigationPaths(
+      { x: 838, y: 358 },
+      positionAdjacentToPort('70'),
+      ['balanced', 'detailed', 'offshore'],
+      400,
+    );
+
+    expect(paths.balanced?.length || 0).toBeGreaterThan(0);
+    expect(paths.offshore?.length || 0).toBeGreaterThan(0);
+    expect(paths.detailed?.length || 0).toBe(0);
+  });
+
+  const simulateAutoNavigation = (
+    start: Position,
+    targetPosition: Position,
+    path: Position[],
+    strategyId: 'balanced' | 'detailed' | 'offshore',
+    maxSteps = 40000,
+    stagnantLimit = 30,
+  ) => {
+    let position = start;
+    const autoNavigation: AutoNavigationState = {
+      enabled: true,
+      targetPortId: '70',
+      targetPosition,
+      strategyId,
+      path,
+      waypointIndex: 0,
+      lastPosition: null,
+      stagnantMoves: 0,
+      useAlternateAxis: false,
+    };
+    let stagnantMoves = 0;
+
+    for (let i = 0; i < maxSteps; i += 1) {
+      const {
+        heading,
+        waypointIndex,
+        arrived,
+        lastPosition,
+        stagnantMoves: autoNavigationStagnantMoves,
+        useAlternateAxis,
+      } = getAutoNavigationHeading(position, autoNavigation);
+
+      autoNavigation.waypointIndex = waypointIndex;
+      autoNavigation.lastPosition = lastPosition;
+      autoNavigation.stagnantMoves = autoNavigationStagnantMoves;
+      autoNavigation.useAlternateAxis = useAlternateAxis;
+
+      if (arrived) {
+        return { status: 'arrived' as const, position, steps: i };
+      }
+
+      if (!heading) {
+        return { status: 'no-heading' as const, position, steps: i };
+      }
+
+      const destination = move(position, heading);
+      const nextPosition = {
+        x: getXWrapAround(destination.x),
+        y: destination.y,
+      };
+
+      if (distance(position, nextPosition) < 0.001) {
+        stagnantMoves += 1;
+      } else {
+        stagnantMoves = 0;
+      }
+
+      if (stagnantMoves >= stagnantLimit) {
+        return {
+          status: 'stuck' as const,
+          position,
+          steps: i,
+          waypoint: autoNavigation.path[waypointIndex],
+          waypointIndex,
+        };
+      }
+
+      position = nextPosition;
+    }
+
+    return { status: 'timeout' as const, position, steps: maxSteps };
+  };
+
+  test.each(['balanced', 'offshore'] as const)(
+    'Lisbon to Mombasa with %s actual-nav path does not get stuck',
+    (strategyId) => {
+      const start = { x: 838, y: 358 };
+      const targetPosition = positionAdjacentToPort('70');
+      const path = createAutoNavigationPath(start, targetPosition, strategyId);
+
+      expect(path.length).toBeGreaterThan(0);
+
+      const result = simulateAutoNavigation(
+        start,
+        targetPosition,
+        path,
+        strategyId,
+      );
+
+      if (result.status === 'stuck') {
+        throw Error(
+          `Auto navigation stuck at step ${result.steps}, position ${JSON.stringify(
+            result.position,
+          )}, waypoint #${result.waypointIndex} ${JSON.stringify(result.waypoint)}`,
+        );
+      }
+
+      expect(result.status).toBe('arrived');
+    },
+  );
 });

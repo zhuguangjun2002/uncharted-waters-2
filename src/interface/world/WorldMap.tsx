@@ -278,26 +278,31 @@ export default function WorldMap({ position, autoNavigation }: Props) {
       return;
     }
 
-    const result = startAutoNavigation(
-      selectedPortId,
-      position,
-      selectedStrategyId,
-      selectedPath,
+    setStatus(
+      `正在为 ${selectedPort.name} 规划安全航线（避开海岸），请稍候...`,
     );
 
-    if (result === 'started') {
-      setStatus(
-        `自动导航已开始：${selectedPort.name}，${selectedStrategy.name}。按 F4 关闭地图查看航行。`,
+    window.setTimeout(() => {
+      const result = startAutoNavigation(
+        selectedPortId,
+        position,
+        selectedStrategyId,
       );
-      return;
-    }
 
-    if (result === 'already-there') {
-      setStatus(`已经在 ${selectedPort.name} 附近。可按 E 靠港。`);
-      return;
-    }
+      if (result === 'started') {
+        setStatus(
+          `自动导航已开始：${selectedPort.name}，${selectedStrategy.name}。按 F4 关闭地图查看航行。`,
+        );
+        return;
+      }
 
-    setStatus(`无法规划到 ${selectedPort.name} 的海上航线。`);
+      if (result === 'already-there') {
+        setStatus(`已经在 ${selectedPort.name} 附近。可按 E 靠港。`);
+        return;
+      }
+
+      setStatus(`无法规划到 ${selectedPort.name} 的海上航线。`);
+    }, 50);
   };
 
   return (
@@ -382,6 +387,10 @@ export default function WorldMap({ position, autoNavigation }: Props) {
               </span>
             ))}
             {selectedStrategy.description}
+          </div>
+          <div className="text-xs text-slate-500">
+            预览为快速近似路线，不计算海岸惩罚；点击“自动导航”时会重新规划一条避开海岸的安全航线，
+            实际黄色航线可能与预览略有差异。
           </div>
         </div>
         {autoNavigation.enabled && (
