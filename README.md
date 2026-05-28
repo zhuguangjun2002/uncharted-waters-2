@@ -3,77 +3,78 @@
 ![build status](https://github.com/JohanLi/uncharted-waters-2/actions/workflows/build.yml/badge.svg?branch=master)
 
 [Uncharted Waters: New Horizons](https://en.wikipedia.org/wiki/Uncharted_Waters#Uncharted_Waters:_New_Horizons)
-(大航海時代II) is an open world RPG and simulation game from 1994, set during
-the Age of Exploration. Being the favorite game of my childhood, I’m remaking
-it using web technologies.
+(大航海時代II) 是一款 1994 年发行的 open world RPG 和 simulation game，
+背景设定在 Age of Exploration。作为我童年最喜欢的游戏，我正在使用 web
+technologies 重制它。
 
-This is not meant to be even close to a full remake. I’m a web developer
-transitioning to doing consulting work — this side project lets prospective
-employers see my code.
+这个项目并不打算接近完整重制。我是一名正在转向 consulting work 的 web
+developer，这个 side project 可以让潜在雇主了解我的代码。
+
+新手本地运行步骤见 [本地运行指南](LOCAL_DEVELOPMENT.md)。
 
 <p align="center">
   <img src="https://media.githubusercontent.com/media/JohanLi/uncharted-waters-2/readme-assets/uncharted-waters-2.png" alt="Uncharted Waters: New Horizons">
-  Screenshots of the original game
+  原版游戏截图
 </p>
 
-## Features
+## 功能
 
-- Walking around in any of the 130 ports and entering their buildings.
-- Sailing around the world map, where your speed takes into account all the
-  factors of the original game.
+- 可以在 130 个 ports 中任意行走，并进入其中的 buildings。
+- 可以在 world map 上航行，航速会纳入原版游戏中的全部影响因素。
 
-This game can be played at [https://johan.li/uncharted-waters-2/](https://johan.li/uncharted-waters-2/).
+可以在 [https://johan.li/uncharted-waters-2/](https://johan.li/uncharted-waters-2/)
+游玩本项目。
 
-#### Next up on the roadmap
+#### Roadmap 下一步
 
 - Markets
-  - Trade goods, taking into account price indices.
+  - Trade goods，并考虑 price indices。
 - Shipyards
-  - Buy and remodel used ships.
+  - 购买和 remodel used ships。
 - Pubs
-  - Recruit crew.
+  - Recruit crew。
 
-## Architecture
+## 架构
 
-The game is made up of two parts:
-- The **game** itself, a canvas element
-- An **interface**/GUI, handled by React
+更详细的开发说明见 [架构说明](ARCHITECTURE.md)。
 
-The **game loop** reads **State** and **Input**, and updates the canvas element.
+游戏由两部分组成：
+- **game** 本体，即一个 canvas element
+- **interface**/GUI，由 React 处理
 
-During gameplay, **actions** are called to update **State**. Actions themselves
-can call **updateInterface**, which wraps React’s `useState` hooks.
+**game loop** 会读取 **State** 和 **Input**，并更新 canvas element。
 
-**Assets** makes sure the images and game data is loaded before the game starts.
+在 gameplay 过程中，会调用 **actions** 更新 **State**。Actions 本身可以调用
+**updateInterface**，后者封装了 React 的 `useState` hooks。
+
+**Assets** 会确保 images 和 game data 在游戏开始前完成加载。
 
 <p align="center">
   <img src="https://media.githubusercontent.com/media/JohanLi/uncharted-waters-2/readme-assets/architecture.png" alt="Architecture" width="560">
 </p>
 
-The two parts maintain their own local state, e.g., keeping track of the
-active menu item or where the NPCs are in a port. Input can also be handled
-locally, particularly when it comes to the interface.
+这两部分各自维护 local state，例如追踪当前 active menu item，或 NPCs 在 port
+中的位置。Input 也可以在局部处理，尤其是 interface 相关输入。
 
 #### Game loop
 
-Uses `requestAnimationFrame()`.
+使用 `requestAnimationFrame()`。
 
-State changes, such as reading Input and translating it to movement, don’t
-occur every frame — a check is performed to see if enough time has passed.
-Each frame does, however, interpolate movement for smoother graphics.
+State changes，例如读取 Input 并将其转换为 movement，并不会在每一帧都发生；
+系统会先检查是否已经经过足够时间。不过每一帧都会对 movement 做 interpolation，
+以获得更流畅的 graphics。
 
-#### Why isn’t a state management library used?
+#### 为什么没有使用 state management library？
 
-In contrast to most web apps, the game code is imperative. It doesn’t need
-to react to changes because it’s looped non-stop. While using a single
-Redux store for both the game and the interface seems to be a clean approach,
-it’s too slow if we want to maintain 60 fps.
+与大多数 web apps 不同，game code 是 imperative 的。它不需要响应变化，因为它会
+持续 loop。虽然让 game 和 interface 共用一个 Redux store 看起来是更整洁的做法，
+但如果要维持 60 fps，这种方式太慢。
 
-The interface alone is too simple to warrant using Redux.
+单独的 interface 又太简单，不值得引入 Redux。
 
-#### Future considerations
+#### 后续考虑
 
-- Players need the ability to save and resume: State, and some local state,
-  needs to be serialized and stored in localStorage, on a server, or both.
-- Using a service worker so the game can be played offline.
-- Pathfinding for NPC fleets.
+- Players 需要 save 和 resume 能力：State 以及部分 local state 需要 serialization，
+  并存储到 localStorage、server，或两者同时使用。
+- 使用 service worker，让游戏可以 offline 游玩。
+- 为 NPC fleets 增加 pathfinding。
