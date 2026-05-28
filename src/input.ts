@@ -51,6 +51,12 @@ export const directionMap: { [key in Direction | '']: number } = {
 const isMovementKey = (key: string): key is MovementKey =>
   key in cardinalKeyMap;
 
+const isFormInputTarget = (target: EventTarget | null) =>
+  target instanceof HTMLInputElement ||
+  target instanceof HTMLTextAreaElement ||
+  target instanceof HTMLSelectElement ||
+  (target instanceof HTMLElement && target.isContentEditable);
+
 let pressedMovementKeys: MovementKey[] = [];
 
 let pressedE = false;
@@ -67,6 +73,10 @@ const onKeydown = (e: KeyboardEvent) => {
     pressedF4 = true;
   }
 
+  if (isFormInputTarget(e.target)) {
+    return;
+  }
+
   if (isMovementKey(pressedKey) && !pressedMovementKeys.includes(pressedKey)) {
     e.preventDefault();
     pressedMovementKeys.unshift(pressedKey);
@@ -74,6 +84,10 @@ const onKeydown = (e: KeyboardEvent) => {
 };
 
 const onKeyup = (e: KeyboardEvent) => {
+  if (isFormInputTarget(e.target)) {
+    return;
+  }
+
   const pressedKey = e.key.toLowerCase();
 
   if (isMovementKey(pressedKey)) {

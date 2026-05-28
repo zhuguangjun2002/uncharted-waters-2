@@ -180,6 +180,24 @@ export default function WorldMap({ position, autoNavigation }: Props) {
   const [status, setStatus] = useState('');
   const [previewPaths, setPreviewPaths] = useState<PreviewPaths>({});
   const [previewStatus, setPreviewStatus] = useState<PreviewStatus>('dirty');
+  const [portFilter, setPortFilter] = useState('');
+  const visiblePortOptions = useMemo(() => {
+    const query = portFilter.trim().toLowerCase();
+    const filtered = query
+      ? portOptions.filter(
+          ({ id, name }) =>
+            name.toLowerCase().includes(query) || id.includes(query),
+        )
+      : portOptions;
+
+    if (filtered.some(({ id }) => id === selectedPortId)) {
+      return filtered;
+    }
+
+    const selected = portOptions.find(({ id }) => id === selectedPortId);
+
+    return selected ? [selected, ...filtered] : filtered;
+  }, [portFilter, selectedPortId]);
   const previewTargetPosition = useMemo(
     () => positionAdjacentToPort(selectedPortId),
     [selectedPortId],
@@ -316,6 +334,13 @@ export default function WorldMap({ position, autoNavigation }: Props) {
         />
         <div className="mt-3 flex items-center gap-3 text-xl">
           <div className="w-36">F4 世界地图</div>
+          <input
+            className="w-40 bg-slate-900 border border-slate-500 px-2 py-1 text-base"
+            type="text"
+            value={portFilter}
+            onChange={(e) => setPortFilter(e.target.value)}
+            placeholder="搜索港口..."
+          />
           <select
             className="flex-1 bg-slate-900 border border-slate-500 px-2 py-1 text-base"
             value={selectedPortId}
@@ -324,7 +349,7 @@ export default function WorldMap({ position, autoNavigation }: Props) {
               handleSelectionChange();
             }}
           >
-            {portOptions.map(({ id, name }) => (
+            {visiblePortOptions.map(({ id, name }) => (
               <option key={id} value={id}>
                 {id}. {name}
               </option>
