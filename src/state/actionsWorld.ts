@@ -44,6 +44,7 @@ export const startAutoNavigation = (
   targetPortId: string,
   startPosition: Position,
   strategyId: AutoNavigationStrategyId = DEFAULT_AUTO_NAVIGATION_STRATEGY_ID,
+  plannedPath: Position[] = [],
 ): AutoNavigationStartResult => {
   const targetPosition = positionAdjacentToPort(targetPortId);
 
@@ -54,11 +55,9 @@ export const startAutoNavigation = (
     return 'already-there';
   }
 
-  const path = createAutoNavigationPath(
-    startPosition,
-    targetPosition,
-    strategyId,
-  );
+  const path = plannedPath.length
+    ? plannedPath
+    : createAutoNavigationPath(startPosition, targetPosition, strategyId);
 
   if (!path.length) {
     cancelAutoNavigation();

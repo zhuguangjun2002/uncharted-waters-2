@@ -28,6 +28,15 @@ interface Props {
   autoNavigation: AutoNavigationState;
 }
 
+type PreviewStatus = 'dirty' | 'calculating' | 'ready' | 'failed';
+type PreviewPaths = Partial<Record<AutoNavigationStrategyId, Position[]>>;
+
+const STRATEGY_COLORS: Record<AutoNavigationStrategyId, string> = {
+  balanced: '#38bdf8',
+  detailed: '#f97316',
+  offshore: '#a78bfa',
+};
+
 const portOptions = regularPorts
   .map(({ name }, i) => ({
     id: String(i + 1),
@@ -147,19 +156,11 @@ export default function WorldMap({ position, autoNavigation }: Props) {
   const [selectedStrategyId, setSelectedStrategyId] =
     useState<AutoNavigationStrategyId>(DEFAULT_AUTO_NAVIGATION_STRATEGY_ID);
   const [status, setStatus] = useState('');
-  const [previewStartPosition, setPreviewStartPosition] = useState(position);
+  const [previewPaths, setPreviewPaths] = useState<PreviewPaths>({});
+  const [previewStatus, setPreviewStatus] = useState<PreviewStatus>('dirty');
   const previewTargetPosition = useMemo(
     () => positionAdjacentToPort(selectedPortId),
     [selectedPortId],
-  );
-  const previewPath = useMemo(
-    () =>
-      createAutoNavigationPath(
-        previewStartPosition,
-        previewTargetPosition,
-        selectedStrategyId,
-      ),
-    [previewStartPosition, previewTargetPosition, selectedStrategyId],
   );
 
   useEffect(() => {
@@ -172,10 +173,24 @@ export default function WorldMap({ position, autoNavigation }: Props) {
 
     const context = canvasRef.current!.getContext('2d')!;
     context.drawImage(baseMapRef.current, 0, 0);
-    drawPath(context, previewPath, previewTargetPosition, '#38bdf8', 1);
+    AUTO_NAVIGATION_STRATEGIES.forEach(({ id }) => {
+      drawPath(
+        context,
+        previewPaths[id] || [],
+        previewTargetPosition,
+        STRATEGY_COLORS[id],
+        id === selectedStrategyId ? 2 : 1,
+      );
+    });
     drawAutoNavigation(context, autoNavigation);
     drawPosition(context, position);
-  }, [autoNavigation, position, previewPath, previewTargetPosition]);
+  }, [
+    autoNavigation,
+    position,
+    previewPaths,
+    previewTargetPosition,
+    selectedStrategyId,
+  ]);
 
   const targetPort = portOptions.find(
     ({ id }) => id === autoNavigation.targetPortId,
@@ -188,16 +203,65 @@ export default function WorldMap({ position, autoNavigation }: Props) {
     ({ id }) => id === autoNavigation.strategyId,
   );
   const progress = getAutoNavigationProgress(autoNavigation);
+  const completedWaypoints = Math.min(
+    autoNavigation.waypointIndex,
+    autoNavigation.path.length,
+  );
   const activeWaypoint = Math.min(
     autoNavigation.waypointIndex + 1,
     autoNavigation.path.length,
   );
+  const remainingWaypoints = Math.max(
+    0,
+    autoNavigation.path.length - completedWaypoints,
+  );
+
+  const handleSelectionChange = () => {
+    setPreviewPaths({});
+    setPreviewStatus('dirty');
+    setStatus('已更改目标或算法，请点击“预览航线”重新计算三种路线。');
+  };
+
+  const handlePreviewPath = () => {
+    setPreviewPaths({});
+    setPreviewStatus('calculating');
+    setStatus(`正在计算到 ${selectedPort.name} 的三种自动导航路线...`);
+
+    window.setTimeout(() => {
+      const paths = AUTO_NAVIGATION_STRATEGIES.reduce<PreviewPaths>(
+        (strategyPaths, { id }) => ({
+          ...strategyPaths,
+          [id]: createAutoNavigationPath(position, previewTargetPosition, id),
+        }),
+        {},
+      );
+      const availableStrategies = AUTO_NAVIGATION_STRATEGIES.filter(
+        ({ id }) => (paths[id] || []).length,
+      );
+
+      setPreviewPaths(paths);
+      setPreviewStatus(availableStrategies.length ? 'ready' : 'failed');
+      setStatus(
+        availableStrategies.length
+          ? `预览完成：${selectedPort.name}，找到 ${availableStrategies.length} 条可用路线。`
+          : `三种算法都无法规划到 ${selectedPort.name} 的海上航线。`,
+      );
+    }, 50);
+  };
 
   const handleStartAutoNavigation = () => {
+    const selectedPath = previewPaths[selectedStrategyId] || [];
+
+    if (previewStatus !== 'ready' || !selectedPath.length) {
+      setStatus('请先点击“预览航线”，并选择一条有颜色路线的算法。');
+      return;
+    }
+
     const result = startAutoNavigation(
       selectedPortId,
       position,
       selectedStrategyId,
+      selectedPath,
     );
 
     if (result === 'started') {
@@ -231,8 +295,7 @@ export default function WorldMap({ position, autoNavigation }: Props) {
             value={selectedPortId}
             onChange={(e) => {
               setSelectedPortId(e.target.value);
-              setPreviewStartPosition(position);
-              setStatus('');
+              handleSelectionChange();
             }}
           >
             {portOptions.map(({ id, name }) => (
@@ -246,8 +309,7 @@ export default function WorldMap({ position, autoNavigation }: Props) {
             value={selectedStrategyId}
             onChange={(e) => {
               setSelectedStrategyId(e.target.value as AutoNavigationStrategyId);
-              setPreviewStartPosition(position);
-              setStatus('');
+              setStatus('已切换实际运行算法；地图上的三种预览路线保持不变。');
             }}
           >
             {AUTO_NAVIGATION_STRATEGIES.map(({ id, name }) => (
@@ -256,6 +318,14 @@ export default function WorldMap({ position, autoNavigation }: Props) {
               </option>
             ))}
           </select>
+          <button
+            className="border border-slate-500 px-3 py-1 text-base hover:bg-slate-800 disabled:text-slate-500"
+            disabled={previewStatus === 'calculating'}
+            type="button"
+            onClick={handlePreviewPath}
+          >
+            {previewStatus === 'calculating' ? '计算中' : '预览航线'}
+          </button>
           <button
             className="border border-slate-500 px-3 py-1 text-base hover:bg-slate-800"
             type="button"
@@ -279,12 +349,17 @@ export default function WorldMap({ position, autoNavigation }: Props) {
           <div>
             {status ||
               (targetPort ? `目标：${targetPort.name}` : '') ||
-              (previewPath.length
-                ? `预览：${selectedPort.name}，${previewPath.length} 个导航点`
-                : `无法预览到 ${selectedPort.name} 的海上航线`)}
+              (previewStatus === 'ready'
+                ? `预览：${selectedPort.name}，三种算法已显示在同一张地图上`
+                : `选择目标和算法后，点击“预览航线”计算三种路线`)}
           </div>
           <div className="text-sm text-slate-400">
-            蓝色为当前选择的预览航线，黄色为正在执行的自动导航航线。
+            黄色为正在执行的自动导航航线。预览颜色：
+            {AUTO_NAVIGATION_STRATEGIES.map(({ id, name }) => (
+              <span key={id} className="ml-3">
+                <span style={{ color: STRATEGY_COLORS[id] }}>■</span> {name}
+              </span>
+            ))}
             {selectedStrategy.description}
           </div>
         </div>
@@ -292,8 +367,8 @@ export default function WorldMap({ position, autoNavigation }: Props) {
           <div className="mt-3 border border-slate-600 bg-slate-950 px-3 py-2 text-sm text-slate-300">
             <div className="mb-1 flex items-center justify-between">
               <span>
-                自动导航进度：{progress}% · 导航点 {activeWaypoint}/
-                {autoNavigation.path.length}
+                航线完成：{progress}% · 已通过 {completedWaypoints} 个，还剩{' '}
+                {remainingWaypoints} 个导航点
               </span>
               <span>
                 {activeStrategy?.name || '未知航线'}
@@ -307,7 +382,9 @@ export default function WorldMap({ position, autoNavigation }: Props) {
               />
             </div>
             <div className="mt-1 text-slate-400">
-              连续停滞：{autoNavigation.stagnantMoves} · 当前坐标：
+              正在前往第 {activeWaypoint}{' '}
+              个导航点。如果“已通过”不变且停滞次数持续增加，就是卡住。连续停滞：
+              {autoNavigation.stagnantMoves} · 当前坐标：
               {Math.round(position.x)}, {Math.round(position.y)}
             </div>
           </div>
