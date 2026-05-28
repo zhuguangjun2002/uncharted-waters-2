@@ -9,6 +9,7 @@
 当前自动导航是第一版 MVP：
 
 - 玩家在 F4 世界地图中选择目标港。
+- 玩家可以选择自动导航策略，并在 F4 世界地图上预览该策略生成的导航点。
 - 系统规划一条到目标港附近的海上路径。
 - 船队自动沿路径航行。
 - 到达目标港附近后停止自动导航。
@@ -42,6 +43,7 @@ autoNavigation: {
   enabled: boolean;
   targetPortId: string | null;
   targetPosition: Position | null;
+  strategyId: AutoNavigationStrategyId;
   path: Position[];
   waypointIndex: number;
   lastPosition: Position | null;
@@ -55,6 +57,7 @@ autoNavigation: {
 - `enabled`：自动导航是否启用。
 - `targetPortId`：目标港 ID。
 - `targetPosition`：目标港附近的可停靠海面坐标，不是港口陆地坐标。
+- `strategyId`：启动自动导航时使用的路径策略。
 - `path`：寻路算法生成的一串 waypoint。
 - `waypointIndex`：当前正在追踪的 waypoint 下标。
 - `lastPosition`：上一轮自动导航检查时的船队位置。
@@ -176,6 +179,39 @@ Lisbon 附近/直布罗陀：4 x 4
 ```
 
 分段混合精度更理想，但实现复杂度更高。当前版本为了简单可靠，先采用“粗网格优先，失败才整体 fallback 到细网格”。
+
+## 当前可选导航策略
+
+记录日期：2026-05-28
+
+F4 世界地图现在可以选择不同自动导航策略，并直接在地图上预览导航点。
+
+当前策略配置在
+[src/game/world/autoNavigation.ts](/home/laozhu/project/uncharted-waters-2/src/game/world/autoNavigation.ts)
+的 `AUTO_NAVIGATION_STRATEGIES` 中：
+
+- `稳健航线`：默认策略。先用 `8 x 8` 规划整条路线；如果失败，再用 `4 x 4` 重新规划整条路线。
+- `细致航线`：直接使用 `4 x 4` 规划整条路线。它更容易通过近岸和海峡，但长途路线可能更贴岸。
+- `远海航线`：先用 `12 x 12` 规划整条路线；如果失败，再退回 `8 x 8` 和 `4 x 4`。它适合观察更粗、更远离海岸的长途路线，但可能过不了狭窄海峡。
+
+这些策略目前仍然是“整条路线使用同一种网格精度”。即使 `远海航线` 最后 fallback 到
+`8 x 8` 或 `4 x 4`，也是整条路线重新规划，不是分段混合。
+
+F4 地图显示规则：
+
+- 蓝色路线：当前选择的港口和策略生成的预览路线。
+- 黄色路线：当前正在执行的自动导航路线。
+- 点击“自动导航”时，会用当前选择的策略启动实际航行。
+- 自动导航运行中会显示进度条、百分比、当前导航点编号、总导航点数、连续停滞次数和当前坐标。
+
+进度条目前按 waypoint 推进计算：
+
+```text
+进度百分比 = 已经跳过的 waypoint 数 / 总 waypoint 数
+```
+
+因此如果船卡在某个区域，进度条会长时间停在同一个百分比；同时“连续停滞”数字会升高。如果触发
+`useAlternateAxis`，F4 面板会显示“脱困中”。
 
 ## 航向如何从 waypoint 计算？
 

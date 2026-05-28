@@ -10,6 +10,7 @@ import {
 const WORLD_MAP_ROWS = 1080;
 const DEFAULT_GRID_SIZE = 8;
 const FINE_GRID_SIZE = 4;
+const COARSE_GRID_SIZE = 12;
 const REACHED_WAYPOINT_DISTANCE = DEFAULT_GRID_SIZE * 4;
 const REACHED_TARGET_DISTANCE = 8;
 const DIRECTION_DEAD_ZONE = 1;
@@ -30,6 +31,43 @@ interface PathOptions {
   rows?: number;
   gridSize?: number;
 }
+
+export type AutoNavigationStrategyId = 'balanced' | 'detailed' | 'offshore';
+
+interface AutoNavigationStrategy {
+  id: AutoNavigationStrategyId;
+  name: string;
+  description: string;
+  gridSizes: number[];
+}
+
+export const DEFAULT_AUTO_NAVIGATION_STRATEGY_ID: AutoNavigationStrategyId =
+  'balanced';
+
+export const AUTO_NAVIGATION_STRATEGIES: AutoNavigationStrategy[] = [
+  {
+    id: 'balanced',
+    name: '稳健航线',
+    description: '先用 8 x 8 规划全程，失败后用 4 x 4 重试。',
+    gridSizes: [DEFAULT_GRID_SIZE, FINE_GRID_SIZE],
+  },
+  {
+    id: 'detailed',
+    name: '细致航线',
+    description: '直接用 4 x 4 规划全程，更容易通过近岸和海峡。',
+    gridSizes: [FINE_GRID_SIZE],
+  },
+  {
+    id: 'offshore',
+    name: '远海航线',
+    description: '先用 12 x 12 规划全程，失败后退回 8 x 8 和 4 x 4。',
+    gridSizes: [COARSE_GRID_SIZE, DEFAULT_GRID_SIZE, FINE_GRID_SIZE],
+  },
+];
+
+const getAutoNavigationStrategy = (strategyId: AutoNavigationStrategyId) =>
+  AUTO_NAVIGATION_STRATEGIES.find(({ id }) => id === strategyId) ||
+  AUTO_NAVIGATION_STRATEGIES[0];
 
 const gridKey = ({ x, y }: GridPosition) => `${x},${y}`;
 
@@ -384,21 +422,23 @@ export const getAutoNavigationHeading = (
   };
 };
 
-export const createAutoNavigationPath = (start: Position, target: Position) => {
-  const path = findSeaPath({
-    start,
-    target,
-    isSea: isWorldSea,
-  });
+export const createAutoNavigationPath = (
+  start: Position,
+  target: Position,
+  strategyId = DEFAULT_AUTO_NAVIGATION_STRATEGY_ID,
+) => {
+  const strategy = getAutoNavigationStrategy(strategyId);
 
-  if (path.length) {
-    return path;
-  }
-
-  return findSeaPath({
-    start,
-    target,
-    isSea: isWorldSea,
-    gridSize: FINE_GRID_SIZE,
-  });
+  return strategy.gridSizes.reduce<Position[]>(
+    (path, gridSize) =>
+      path.length
+        ? path
+        : findSeaPath({
+            start,
+            target,
+            isSea: isWorldSea,
+            gridSize,
+          }),
+    [],
+  );
 };

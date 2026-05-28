@@ -5,6 +5,7 @@ import type { World } from '../game/world/world';
 import type { QuestId } from '../interface/quest/questData';
 import { ItemId } from '../data/itemData';
 import type { Position } from '../types';
+import type { AutoNavigationStrategyId } from '../game/world/autoNavigation';
 
 export type Stage = 'world' | 'port' | 'building';
 
@@ -36,6 +37,7 @@ export interface AutoNavigationState {
   enabled: boolean;
   targetPortId: string | null;
   targetPosition: Position | null;
+  strategyId: AutoNavigationStrategyId;
   path: Position[];
   waypointIndex: number;
   lastPosition: Position | null;
@@ -75,6 +77,7 @@ export const getDefaultAutoNavigation = (): AutoNavigationState => ({
   enabled: false,
   targetPortId: null,
   targetPosition: null,
+  strategyId: 'balanced',
   path: [],
   waypointIndex: 0,
   lastPosition: null,

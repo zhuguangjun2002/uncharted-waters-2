@@ -66,6 +66,7 @@ describe('getAutoNavigationHeading', () => {
     enabled: true,
     targetPortId: '1',
     targetPosition: { x: 40, y: 10 },
+    strategyId: 'balanced',
     path: [
       { x: 10, y: 10 },
       { x: 80, y: 10 },
@@ -207,6 +208,7 @@ describe('auto navigation simulation', () => {
       enabled: true,
       targetPortId: '74',
       targetPosition,
+      strategyId: 'balanced',
       path: createAutoNavigationPath(position, targetPosition),
       waypointIndex: 0,
       lastPosition: null,

@@ -5,6 +5,8 @@ import Input from '../input';
 import updateInterface from './updateInterface';
 import { updateGeneral } from './actionsPort';
 import {
+  DEFAULT_AUTO_NAVIGATION_STRATEGY_ID,
+  type AutoNavigationStrategyId,
   createAutoNavigationPath,
   getAutoNavigationHeading,
 } from '../game/world/autoNavigation';
@@ -41,6 +43,7 @@ export const cancelAutoNavigation = () => {
 export const startAutoNavigation = (
   targetPortId: string,
   startPosition: Position,
+  strategyId: AutoNavigationStrategyId = DEFAULT_AUTO_NAVIGATION_STRATEGY_ID,
 ): AutoNavigationStartResult => {
   const targetPosition = positionAdjacentToPort(targetPortId);
 
@@ -51,7 +54,11 @@ export const startAutoNavigation = (
     return 'already-there';
   }
 
-  const path = createAutoNavigationPath(startPosition, targetPosition);
+  const path = createAutoNavigationPath(
+    startPosition,
+    targetPosition,
+    strategyId,
+  );
 
   if (!path.length) {
     cancelAutoNavigation();
@@ -62,6 +69,7 @@ export const startAutoNavigation = (
     enabled: true,
     targetPortId,
     targetPosition,
+    strategyId,
     path,
     waypointIndex: 0,
     lastPosition: null,
