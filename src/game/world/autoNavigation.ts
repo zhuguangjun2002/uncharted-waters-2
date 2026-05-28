@@ -15,6 +15,7 @@ const REACHED_WAYPOINT_DISTANCE = DEFAULT_GRID_SIZE * 4;
 const REACHED_TARGET_DISTANCE = 8;
 const DIRECTION_DEAD_ZONE = 1;
 const COAST_PENALTY_RADIUS = 16;
+const DIAGONAL_OPEN_SEA_RADIUS = 6;
 const STAGNANT_MOVE_DISTANCE = 0.001;
 const STAGNANT_MOVES_BEFORE_ALTERNATE_AXIS = 12;
 const PREVIEW_SEARCHED_GRID_NODES = 400;
@@ -281,6 +282,11 @@ export const isWorldSea = ({ x, y }: Position) => {
   }
 
   const worldTilemap = Assets.data('worldTilemap');
+
+  if (!worldTilemap) {
+    return false;
+  }
+
   const offsets = [
     { x: 0, y: 0 },
     { x: 1, y: 0 },
@@ -457,6 +463,7 @@ export const getDirectionToPosition = (
   from: Position,
   to: Position,
   useAlternateAxis = false,
+  allowDiagonal = true,
 ): Direction | '' => {
   const xDelta = getFromToAccountingForWrapAround(from.x, to.x);
   const yDelta = to.y - from.y;
@@ -480,7 +487,29 @@ export const getDirectionToPosition = (
     return alternateDirection;
   }
 
-  return primaryDirection;
+  return allowDiagonal
+    ? (`${yDirection}${xDirection}` as Direction)
+    : primaryDirection;
+};
+
+const isOpenSeaForDiagonalHeading = (position: Position) => {
+  for (
+    let yOffset = -DIAGONAL_OPEN_SEA_RADIUS;
+    yOffset <= DIAGONAL_OPEN_SEA_RADIUS;
+    yOffset += 1
+  ) {
+    for (
+      let xOffset = -DIAGONAL_OPEN_SEA_RADIUS;
+      xOffset <= DIAGONAL_OPEN_SEA_RADIUS;
+      xOffset += 1
+    ) {
+      if (!isWorldSea({ x: position.x + xOffset, y: position.y + yOffset })) {
+        return false;
+      }
+    }
+  }
+
+  return true;
 };
 
 export const getAutoNavigationHeading = (
@@ -511,6 +540,8 @@ export const getAutoNavigationHeading = (
       getReachedDistance(waypointIndex, autoNavigation)
   ) {
     waypointIndex += 1;
+    stagnantMoves = 0;
+    useAlternateAxis = false;
   }
 
   if (waypointIndex >= autoNavigation.path.length) {
@@ -529,6 +560,7 @@ export const getAutoNavigationHeading = (
       position,
       autoNavigation.path[waypointIndex],
       useAlternateAxis,
+      !useAlternateAxis && isOpenSeaForDiagonalHeading(position),
     ),
     waypointIndex,
     arrived: false,

@@ -70,10 +70,23 @@ describe('getDirectionToPosition', () => {
     );
   });
 
-  test('uses one axis at a time to avoid diagonal shoreline stalls', () => {
+  test('uses diagonal headings when both axes need movement', () => {
     expect(getDirectionToPosition({ x: 10, y: 10 }, { x: 20, y: 20 })).toBe(
-      'e',
+      'se',
     );
+    expect(getDirectionToPosition({ x: 10, y: 10 }, { x: 20, y: 0 })).toBe(
+      'ne',
+    );
+    expect(getDirectionToPosition({ x: 10, y: 10 }, { x: 0, y: 20 })).toBe(
+      'sw',
+    );
+    expect(getDirectionToPosition({ x: 10, y: 10 }, { x: 0, y: 0 })).toBe('nw');
+  });
+
+  test('uses one axis at a time only for alternate-axis recovery', () => {
+    expect(
+      getDirectionToPosition({ x: 10, y: 10 }, { x: 20, y: 20 }, true),
+    ).toBe('s');
   });
 });
 
@@ -411,9 +424,11 @@ describe('auto navigation simulation', () => {
 
       if (result.status === 'stuck') {
         throw Error(
-          `Auto navigation stuck at step ${result.steps}, position ${JSON.stringify(
-            result.position,
-          )}, waypoint #${result.waypointIndex} ${JSON.stringify(result.waypoint)}`,
+          `Auto navigation stuck at step ${
+            result.steps
+          }, position ${JSON.stringify(result.position)}, waypoint #${
+            result.waypointIndex
+          } ${JSON.stringify(result.waypoint)}`,
         );
       }
 
