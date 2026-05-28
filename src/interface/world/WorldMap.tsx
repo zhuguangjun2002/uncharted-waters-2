@@ -27,6 +27,7 @@ const MEDIUM_PREVIEW_DISTANCE = 260;
 const NEAR_PREVIEW_MAX_SEARCHED_GRID_NODES = 3000;
 const MEDIUM_PREVIEW_MAX_SEARCHED_GRID_NODES = 1200;
 const FAR_PREVIEW_MAX_SEARCHED_GRID_NODES = 400;
+const VISIBLE_PORT_COUNT = 6;
 
 interface Props {
   position: Position;
@@ -183,21 +184,18 @@ export default function WorldMap({ position, autoNavigation }: Props) {
   const [portFilter, setPortFilter] = useState('');
   const visiblePortOptions = useMemo(() => {
     const query = portFilter.trim().toLowerCase();
-    const filtered = query
-      ? portOptions.filter(
-          ({ id, name }) =>
-            name.toLowerCase().includes(query) || id.includes(query),
-        )
-      : portOptions;
 
-    if (filtered.some(({ id }) => id === selectedPortId)) {
-      return filtered;
+    if (!query) {
+      return portOptions;
     }
 
-    const selected = portOptions.find(({ id }) => id === selectedPortId);
-
-    return selected ? [selected, ...filtered] : filtered;
-  }, [portFilter, selectedPortId]);
+    return portOptions.filter(
+      ({ id, name }) =>
+        name.toLowerCase().includes(query) || id.includes(query),
+    );
+  }, [portFilter]);
+  const [highlightIndex, setHighlightIndex] = useState(0);
+  const [scrollOffset, setScrollOffset] = useState(0);
   const previewTargetPosition = useMemo(
     () => positionAdjacentToPort(selectedPortId),
     [selectedPortId],
@@ -232,6 +230,19 @@ export default function WorldMap({ position, autoNavigation }: Props) {
     selectedStrategyId,
   ]);
 
+  useEffect(() => {
+    setHighlightIndex(0);
+    setScrollOffset(0);
+  }, [portFilter]);
+
+  useEffect(() => {
+    if (highlightIndex < scrollOffset) {
+      setScrollOffset(highlightIndex);
+    } else if (highlightIndex >= scrollOffset + VISIBLE_PORT_COUNT) {
+      setScrollOffset(highlightIndex - VISIBLE_PORT_COUNT + 1);
+    }
+  }, [highlightIndex, scrollOffset]);
+
   const targetPort = portOptions.find(
     ({ id }) => id === autoNavigation.targetPortId,
   );
@@ -260,6 +271,44 @@ export default function WorldMap({ position, autoNavigation }: Props) {
     setPreviewPaths({});
     setPreviewStatus('dirty');
     setStatus('已更改目标或算法，请点击“预览航线”重新计算三种路线。');
+  };
+
+  const commitPortAt = (index: number) => {
+    const port = visiblePortOptions[index];
+
+    if (!port || port.id === selectedPortId) {
+      return;
+    }
+
+    setSelectedPortId(port.id);
+    handleSelectionChange();
+  };
+
+  const handlePortFilterKeyDown = (e: React.KeyboardEvent<HTMLInputElement>) => {
+    if (e.key === 'ArrowDown') {
+      e.preventDefault();
+      setHighlightIndex((i) =>
+        Math.min(Math.max(0, visiblePortOptions.length - 1), i + 1),
+      );
+      return;
+    }
+
+    if (e.key === 'ArrowUp') {
+      e.preventDefault();
+      setHighlightIndex((i) => Math.max(0, i - 1));
+      return;
+    }
+
+    if (e.key === 'Enter') {
+      e.preventDefault();
+      commitPortAt(highlightIndex);
+      return;
+    }
+
+    if (e.key === 'Escape') {
+      e.preventDefault();
+      setPortFilter('');
+    }
   };
 
   const handlePreviewPath = () => {
@@ -335,26 +384,15 @@ export default function WorldMap({ position, autoNavigation }: Props) {
         <div className="mt-3 flex items-center gap-3 text-xl">
           <div className="w-36">F4 世界地图</div>
           <input
-            className="w-40 bg-slate-900 border border-slate-500 px-2 py-1 text-base"
+            // eslint-disable-next-line jsx-a11y/no-autofocus
+            autoFocus
+            className="flex-1 bg-slate-900 border border-slate-500 px-2 py-1 text-base"
             type="text"
             value={portFilter}
             onChange={(e) => setPortFilter(e.target.value)}
-            placeholder="搜索港口..."
+            onKeyDown={handlePortFilterKeyDown}
+            placeholder={`搜索港口（当前：${selectedPort.id}. ${selectedPort.name}）`}
           />
-          <select
-            className="flex-1 bg-slate-900 border border-slate-500 px-2 py-1 text-base"
-            value={selectedPortId}
-            onChange={(e) => {
-              setSelectedPortId(e.target.value);
-              handleSelectionChange();
-            }}
-          >
-            {visiblePortOptions.map(({ id, name }) => (
-              <option key={id} value={id}>
-                {id}. {name}
-              </option>
-            ))}
-          </select>
           <select
             className="w-40 bg-slate-900 border border-slate-500 px-2 py-1 text-base"
             value={selectedStrategyId}
@@ -395,6 +433,45 @@ export default function WorldMap({ position, autoNavigation }: Props) {
           >
             取消
           </button>
+        </div>
+        <div className="mt-2 border border-slate-700 bg-slate-950 px-3 py-2 font-mono text-base">
+          {visiblePortOptions.length === 0 ? (
+            <div className="text-slate-500">无匹配港口</div>
+          ) : (
+            visiblePortOptions
+              .slice(scrollOffset, scrollOffset + VISIBLE_PORT_COUNT)
+              .map(({ id, name }, i) => {
+                const absoluteIndex = scrollOffset + i;
+                const isHighlighted = absoluteIndex === highlightIndex;
+
+                return (
+                  <button
+                    key={id}
+                    type="button"
+                    className={`block w-full cursor-pointer text-left ${
+                      isHighlighted
+                        ? 'text-amber-300'
+                        : 'text-slate-400 hover:text-slate-200'
+                    }`}
+                    onClick={() => {
+                      setHighlightIndex(absoluteIndex);
+                      commitPortAt(absoluteIndex);
+                    }}
+                  >
+                    {isHighlighted ? '▶ ' : '   '}
+                    {id}. {name}
+                  </button>
+                );
+              })
+          )}
+          {visiblePortOptions.length > VISIBLE_PORT_COUNT && (
+            <div className="text-slate-500">
+              … 还有 {visiblePortOptions.length - VISIBLE_PORT_COUNT} 个港口
+            </div>
+          )}
+        </div>
+        <div className="mt-1 text-sm text-slate-500">
+          ↑↓ 选择 · Enter 确认 · Esc 清空过滤 · 也可直接点击列表行
         </div>
         <div className="mt-2 h-12 text-center text-base text-slate-300">
           <div>
