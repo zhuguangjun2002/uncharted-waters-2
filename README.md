@@ -10,7 +10,9 @@ technologies 重制它。
 这个项目并不打算接近完整重制。我是一名正在转向 consulting work 的 web
 developer，这个 side project 可以让潜在雇主了解我的代码。
 
-新手本地运行步骤见 [本地运行指南](LOCAL_DEVELOPMENT.md)。
+新手本地运行步骤见 [本地运行指南](LOCAL_DEVELOPMENT.md)。注意：本项目的
+PNG、OGG 等资源通过 Git LFS 管理，本地运行前需要先安装 Git LFS 并执行
+`git lfs pull`，否则页面可能一直停在“正在加载...”。
 
 <p align="center">
   <img src="https://media.githubusercontent.com/media/JohanLi/uncharted-waters-2/readme-assets/uncharted-waters-2.png" alt="Uncharted Waters: New Horizons">

@@ -9,6 +9,7 @@
 - **Node.js**：建议使用 Node.js 18 LTS 或更新的 LTS 版本。
 - **npm**：安装 Node.js 时通常会一起安装。
 - **Git**：如果你需要从 GitHub clone 项目。
+- **Git LFS**：项目里的 PNG、OGG 等大型资源通过 Git LFS 管理，必须安装并拉取真实文件。
 
 可以在终端中检查是否已经安装：
 
@@ -16,9 +17,18 @@
 node -v
 npm -v
 git --version
+git lfs version
 ```
 
 如果能看到版本号，说明对应工具已经可用。
+
+如果 `git lfs version` 报错，说明 Git LFS 没有安装。Ubuntu/WSL 环境可以执行：
+
+```bash
+sudo apt update
+sudo apt install git-lfs
+git lfs install
+```
 
 ## 获取项目代码
 
@@ -32,6 +42,40 @@ cd uncharted-waters-2
 ```
 
 如果你是直接下载 zip 文件，也可以解压后在终端进入项目目录。项目目录里应该能看到 `package.json`、`README.md`、`src/` 等文件。
+
+## 拉取 Git LFS 资源
+
+进入项目目录后，先执行：
+
+```bash
+git lfs pull
+```
+
+这一步会把仓库中的 Git LFS pointer 文件替换成真正的图片、音频等资源。如果跳过这一步，页面可能会一直停在“正在加载...”，Console 中出现：
+
+```text
+assets.ts:79 Uncaught (in promise) Error: Failed loading image
+```
+
+可以用下面的命令检查图片是否已经正确拉取：
+
+```bash
+file src/game/images/worldTileset.png
+```
+
+正常情况下应该看到类似：
+
+```text
+PNG image data
+```
+
+如果看到的是 `ASCII text`，或者文件内容类似下面这样，说明 Git LFS 资源还没有拉下来：
+
+```text
+version https://git-lfs.github.com/spec/v1
+oid sha256:...
+size ...
+```
 
 ## 安装依赖
 
@@ -157,7 +201,26 @@ npm run test:e2e
 
 ### 页面一直停在“正在加载...”
 
-可能是资源加载失败或代码运行时报错。可以打开浏览器 DevTools：
+最常见原因是 Git LFS 资源没有拉取。项目中的 PNG、OGG 等文件如果还是 Git LFS pointer 文本，浏览器会把文本当图片加载，最终报：
+
+```text
+assets.ts:79 Uncaught (in promise) Error: Failed loading image
+```
+
+先执行：
+
+```bash
+git lfs pull
+file src/game/images/worldTileset.png
+```
+
+确认输出是 `PNG image data` 后，再重新运行：
+
+```bash
+npm start
+```
+
+如果 Git LFS 已经正常，仍然停在“正在加载...”，可以打开浏览器 DevTools：
 
 - Chrome/Edge：按 `F12`，或右键页面选择 Inspect。
 - 查看 Console 是否有红色错误。
@@ -176,6 +239,7 @@ npm run test:e2e
 第一次运行：
 
 ```bash
+git lfs pull
 npm install
 npm start
 ```
