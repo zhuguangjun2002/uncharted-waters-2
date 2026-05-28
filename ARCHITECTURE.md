@@ -316,8 +316,12 @@ const markerY = Math.floor((y / WORLD_MAP_ROWS) * MAP_HEIGHT);
 
 记录日期：2026-05-28
 
-当前代码没有实现原作那种“选择目的地后自动航行到目标港”的自动导航，也没有完整预留
-玩家自动导航接口。
+详细设计、A\* 和 waypoint 解释、`8 x 8` / `4 x 4` 策略、bug 记录和后续测试记录见
+[AUTO_NAVIGATION.md](/home/laozhu/project/uncharted-waters-2/AUTO_NAVIGATION.md)。后续自动导航问题优先维护该文档。
+
+当前已实现自动导航 MVP：玩家可以在 F4 世界地图选择目标港，系统规划海上路径，船队按
+waypoint 自动航行，到达目标港附近后停止。详细行为以
+[AUTO_NAVIGATION.md](/home/laozhu/project/uncharted-waters-2/AUTO_NAVIGATION.md) 为准。
 
 ### 当前已有行为：保持航向
 
@@ -364,9 +368,9 @@ if (heading) {
 README 的“后续考虑”里提到过“为 NPC fleets 增加 pathfinding”，说明原作者考虑过寻路，
 但目前还没有实现。
 
-### 缺失的自动导航状态
+### 后续可扩展的自动导航状态和入口
 
-如果要实现原作风格的自动导航，目前还缺这些状态和入口：
+如果要继续接近原作风格，仍可继续扩展这些状态和入口：
 
 - 自动导航开关。
 - 目标港或目标世界坐标。
