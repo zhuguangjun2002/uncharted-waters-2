@@ -14,7 +14,7 @@ import type { Position } from '../../types';
 import {
   AUTO_NAVIGATION_STRATEGIES,
   DEFAULT_AUTO_NAVIGATION_STRATEGY_ID,
-  createAutoNavigationPath,
+  createAutoNavigationPaths,
   type AutoNavigationStrategyId,
 } from '../../game/world/autoNavigation';
 import { positionAdjacentToPort } from '../../state/selectors';
@@ -22,6 +22,11 @@ import { positionAdjacentToPort } from '../../state/selectors';
 const MAP_WIDTH = 720;
 const MAP_HEIGHT = 360;
 const WORLD_MAP_ROWS = 1080;
+const NEAR_PREVIEW_DISTANCE = 160;
+const MEDIUM_PREVIEW_DISTANCE = 260;
+const NEAR_PREVIEW_MAX_SEARCHED_GRID_NODES = 3000;
+const MEDIUM_PREVIEW_MAX_SEARCHED_GRID_NODES = 1200;
+const FAR_PREVIEW_MAX_SEARCHED_GRID_NODES = 400;
 
 interface Props {
   position: Position;
@@ -53,6 +58,23 @@ const toMapPosition = ({ x, y }: Position) => ({
   x: Math.floor((x / WORLD_MAP_COLUMNS) * MAP_WIDTH),
   y: Math.floor((y / WORLD_MAP_ROWS) * MAP_HEIGHT),
 });
+
+const getPreviewSearchBudget = (from: Position, to: Position) => {
+  const rawX = Math.abs(to.x - from.x);
+  const x = Math.min(rawX, WORLD_MAP_COLUMNS - rawX);
+  const y = to.y - from.y;
+  const distance = Math.sqrt(x * x + y * y);
+
+  if (distance <= NEAR_PREVIEW_DISTANCE) {
+    return NEAR_PREVIEW_MAX_SEARCHED_GRID_NODES;
+  }
+
+  if (distance <= MEDIUM_PREVIEW_DISTANCE) {
+    return MEDIUM_PREVIEW_MAX_SEARCHED_GRID_NODES;
+  }
+
+  return FAR_PREVIEW_MAX_SEARCHED_GRID_NODES;
+};
 
 const drawBaseMap = (context: CanvasRenderingContext2D) => {
   const imageData = context.createImageData(MAP_WIDTH, MAP_HEIGHT);
@@ -228,12 +250,11 @@ export default function WorldMap({ position, autoNavigation }: Props) {
     setStatus(`正在计算到 ${selectedPort.name} 的三种自动导航路线...`);
 
     window.setTimeout(() => {
-      const paths = AUTO_NAVIGATION_STRATEGIES.reduce<PreviewPaths>(
-        (strategyPaths, { id }) => ({
-          ...strategyPaths,
-          [id]: createAutoNavigationPath(position, previewTargetPosition, id),
-        }),
-        {},
+      const paths = createAutoNavigationPaths(
+        position,
+        previewTargetPosition,
+        AUTO_NAVIGATION_STRATEGIES.map(({ id }) => id),
+        getPreviewSearchBudget(position, previewTargetPosition),
       );
       const availableStrategies = AUTO_NAVIGATION_STRATEGIES.filter(
         ({ id }) => (paths[id] || []).length,

@@ -11,11 +11,13 @@ import {
 } from './sharedUtils';
 import {
   createAutoNavigationPath,
+  createAutoNavigationPaths,
   findSeaPath,
   getAutoNavigationHeading,
   getDirectionToPosition,
 } from './autoNavigation';
 import type { AutoNavigationState } from '../../state/state';
+import { positionAdjacentToPort } from '../../state/selectors';
 
 describe('findSeaPath', () => {
   test('uses horizontal wraparound for shorter paths', () => {
@@ -44,6 +46,20 @@ describe('findSeaPath', () => {
 
     expect(path).not.toContainEqual({ x: 25, y: 5 });
     expect(path[path.length - 1]).toEqual({ x: 35, y: 5 });
+  });
+
+  test('stops searching after the maximum searched nodes', () => {
+    const path = findSeaPath({
+      start: { x: 5, y: 5 },
+      target: { x: 95, y: 95 },
+      columns: 100,
+      rows: 100,
+      gridSize: 1,
+      maxSearchedNodes: 10,
+      isSea: () => true,
+    });
+
+    expect(path).toEqual([]);
   });
 });
 
@@ -267,5 +283,27 @@ describe('auto navigation simulation', () => {
     }
 
     throw Error('Auto navigation did not arrive within 20000 simulated steps');
+  });
+
+  test('Hormuz to Changan preview returns without exhausting route search', () => {
+    const paths = createAutoNavigationPaths(
+      { x: 1240, y: 448 },
+      { x: 1560, y: 386 },
+      ['balanced', 'detailed', 'offshore'],
+      400,
+    );
+
+    expect(Object.keys(paths)).toEqual(['balanced', 'detailed', 'offshore']);
+  });
+
+  test('Lisbon to Barcelona preview still finds a route', () => {
+    const paths = createAutoNavigationPaths(
+      { x: 838, y: 358 },
+      positionAdjacentToPort('4'),
+      ['balanced', 'detailed', 'offshore'],
+      3000,
+    );
+
+    expect(paths.balanced?.length || 0).toBeGreaterThan(0);
   });
 });

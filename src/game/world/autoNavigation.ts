@@ -17,6 +17,7 @@ const DIRECTION_DEAD_ZONE = 1;
 const COAST_PENALTY_RADIUS = 16;
 const STAGNANT_MOVE_DISTANCE = 0.001;
 const STAGNANT_MOVES_BEFORE_ALTERNATE_AXIS = 12;
+const PREVIEW_SEARCHED_GRID_NODES = 400;
 
 interface GridPosition {
   x: number;
@@ -30,6 +31,8 @@ interface PathOptions {
   columns?: number;
   rows?: number;
   gridSize?: number;
+  maxSearchedNodes?: number;
+  useCoastPenalty?: boolean;
 }
 
 export type AutoNavigationStrategyId = 'balanced' | 'detailed' | 'offshore';
@@ -138,9 +141,16 @@ const reconstructPath = (
 ) => {
   const path = [positions.get(currentKey)!];
   let key = currentKey;
+  const visited = new Set<string>([currentKey]);
 
   while (cameFrom.has(key)) {
     key = cameFrom.get(key)!;
+
+    if (visited.has(key)) {
+      return [];
+    }
+
+    visited.add(key);
     path.unshift(positions.get(key)!);
   }
 
@@ -208,6 +218,8 @@ export const findSeaPath = ({
   columns = WORLD_MAP_COLUMNS,
   rows = WORLD_MAP_ROWS,
   gridSize = DEFAULT_GRID_SIZE,
+  maxSearchedNodes = Number.POSITIVE_INFINITY,
+  useCoastPenalty = true,
 }: PathOptions) => {
   const gridColumns = getGridColumns(columns, gridSize);
   const gridRows = getGridRows(rows, gridSize);
@@ -225,8 +237,10 @@ export const findSeaPath = ({
   const fScore = new Map<string, number>([
     [gridKey(startGrid), getHeuristic(startGrid, targetGrid, gridColumns)],
   ]);
+  const closedSet = new Set<string>();
   const seaCache = new Map<string, boolean>();
   const coastPenaltyCache = new Map<string, number>();
+  let searchedNodes = 0;
 
   const isGridSea = (gridPosition: GridPosition) => {
     const key = gridKey(gridPosition);
@@ -259,7 +273,9 @@ export const findSeaPath = ({
     return penalty;
   };
 
-  while (openSet.length) {
+  while (openSet.length && searchedNodes < maxSearchedNodes) {
+    searchedNodes += 1;
+
     openSet.sort(
       (a, b) =>
         (fScore.get(gridKey(a)) ?? Infinity) -
@@ -269,49 +285,65 @@ export const findSeaPath = ({
     const current = openSet.shift()!;
     const currentKey = gridKey(current);
 
-    if (currentKey === targetKey) {
-      return reconstructPath(cameFrom, currentKey, positions)
-        .slice(1)
-        .map((gridPosition) =>
-          gridToPosition(gridPosition, columns, rows, gridSize),
-        )
-        .concat(target);
-    }
+    if (!closedSet.has(currentKey)) {
+      closedSet.add(currentKey);
 
-    for (let yDelta = -1; yDelta <= 1; yDelta += 1) {
-      for (let xDelta = -1; xDelta <= 1; xDelta += 1) {
-        const shouldCheckNeighbor = xDelta !== 0 || yDelta !== 0;
+      if (currentKey === targetKey) {
+        const gridPath = reconstructPath(cameFrom, currentKey, positions);
 
-        const neighbor = {
-          x: (current.x + xDelta + gridColumns) % gridColumns,
-          y: current.y + yDelta,
-        };
-        const neighborKey = gridKey(neighbor);
-        const isAllowedSeaNode =
-          neighborKey === targetKey ||
-          neighborKey === gridKey(startGrid) ||
-          isGridSea(neighbor);
-        const isInBounds = neighbor.y >= 0 && neighbor.y < gridRows;
+        if (!gridPath.length) {
+          return [];
+        }
 
-        if (shouldCheckNeighbor && isInBounds && isAllowedSeaNode) {
-          const tentativeGScore =
-            (gScore.get(currentKey) ?? Infinity) +
-            (xDelta !== 0 && yDelta !== 0 ? Math.SQRT2 : 1) +
-            getGridCoastPenalty(neighbor);
+        return gridPath
+          .slice(1)
+          .map((gridPosition) =>
+            gridToPosition(gridPosition, columns, rows, gridSize),
+          )
+          .concat(target);
+      }
 
-          if (tentativeGScore < (gScore.get(neighborKey) ?? Infinity)) {
-            cameFrom.set(neighborKey, currentKey);
-            positions.set(neighborKey, neighbor);
-            gScore.set(neighborKey, tentativeGScore);
-            fScore.set(
-              neighborKey,
-              tentativeGScore + getHeuristic(neighbor, targetGrid, gridColumns),
-            );
+      for (let yDelta = -1; yDelta <= 1; yDelta += 1) {
+        for (let xDelta = -1; xDelta <= 1; xDelta += 1) {
+          const shouldCheckNeighbor = xDelta !== 0 || yDelta !== 0;
 
-            if (
-              !openSet.some((position) => gridKey(position) === neighborKey)
-            ) {
-              openSet.push(neighbor);
+          const neighbor = {
+            x: (current.x + xDelta + gridColumns) % gridColumns,
+            y: current.y + yDelta,
+          };
+          const neighborKey = gridKey(neighbor);
+          const isAllowedSeaNode =
+            neighborKey === targetKey ||
+            neighborKey === gridKey(startGrid) ||
+            isGridSea(neighbor);
+          const isInBounds = neighbor.y >= 0 && neighbor.y < gridRows;
+
+          if (
+            shouldCheckNeighbor &&
+            !closedSet.has(neighborKey) &&
+            isInBounds &&
+            isAllowedSeaNode
+          ) {
+            const tentativeGScore =
+              (gScore.get(currentKey) ?? Infinity) +
+              (xDelta !== 0 && yDelta !== 0 ? Math.SQRT2 : 1) +
+              (useCoastPenalty ? getGridCoastPenalty(neighbor) : 0);
+
+            if (tentativeGScore < (gScore.get(neighborKey) ?? Infinity)) {
+              cameFrom.set(neighborKey, currentKey);
+              positions.set(neighborKey, neighbor);
+              gScore.set(neighborKey, tentativeGScore);
+              fScore.set(
+                neighborKey,
+                tentativeGScore +
+                  getHeuristic(neighbor, targetGrid, gridColumns),
+              );
+
+              if (
+                !openSet.some((position) => gridKey(position) === neighborKey)
+              ) {
+                openSet.push(neighbor);
+              }
             }
           }
         }
@@ -426,6 +458,8 @@ export const createAutoNavigationPath = (
   start: Position,
   target: Position,
   strategyId = DEFAULT_AUTO_NAVIGATION_STRATEGY_ID,
+  maxSearchedNodes = Number.POSITIVE_INFINITY,
+  useCoastPenalty = true,
 ) => {
   const strategy = getAutoNavigationStrategy(strategyId);
 
@@ -438,7 +472,54 @@ export const createAutoNavigationPath = (
             target,
             isSea: isWorldSea,
             gridSize,
+            maxSearchedNodes,
+            useCoastPenalty,
           }),
     [],
   );
+};
+
+export const createAutoNavigationPaths = (
+  start: Position,
+  target: Position,
+  strategyIds: AutoNavigationStrategyId[],
+  maxSearchedNodes = PREVIEW_SEARCHED_GRID_NODES,
+  useCoastPenalty = false,
+) => {
+  const pathsByGridSize = new Map<number, Position[]>();
+
+  return strategyIds.reduce<
+    Partial<Record<AutoNavigationStrategyId, Position[]>>
+  >((pathsByStrategy, strategyId) => {
+    const strategy = getAutoNavigationStrategy(strategyId);
+    const path = strategy.gridSizes.reduce<Position[]>(
+      (matchedPath, gridSize) => {
+        if (matchedPath.length) {
+          return matchedPath;
+        }
+
+        if (!pathsByGridSize.has(gridSize)) {
+          pathsByGridSize.set(
+            gridSize,
+            findSeaPath({
+              start,
+              target,
+              isSea: isWorldSea,
+              gridSize,
+              maxSearchedNodes,
+              useCoastPenalty,
+            }),
+          );
+        }
+
+        return pathsByGridSize.get(gridSize)!;
+      },
+      [],
+    );
+
+    return {
+      ...pathsByStrategy,
+      [strategyId]: path,
+    };
+  }, {});
 };
