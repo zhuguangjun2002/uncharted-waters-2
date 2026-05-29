@@ -656,7 +656,7 @@ export default function WorldMap({ position, autoNavigation }: Props) {
               <div className="h-full w-full animate-pulse bg-lime-500" />
             </div>
             <div className="mt-1 text-xs text-slate-500">
-              使用 4×4 精细网格、无海岸惩罚，确保穿越海峡。算法分块执行，界面保持响应。
+              使用 4×4 精细网格、轻量海岸惩罚（4px 内），确保穿越海峡同时远离峭壁。算法分块执行，界面保持响应。
             </div>
           </div>
         )}

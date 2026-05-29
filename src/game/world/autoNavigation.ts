@@ -614,6 +614,7 @@ const getPreviewGridBudgetMultiplier = (gridSize: number) => {
 };
 
 const DEEP_ROUTE_CHUNK_NODES = 3000;
+const DEEP_ROUTE_COAST_RADIUS = FINE_GRID_SIZE; // 4px: nudge waypoints offshore without blocking straits
 
 export interface DeepRouteHandle {
   promise: Promise<Position[]>;
@@ -646,6 +647,7 @@ export const findDeepRoutePath = (
   const gScore = new Map<string, number>([[startKey, 0]]);
   const closedSet = new Set<string>();
   const seaCache = new Map<string, boolean>();
+  const coastPenaltyCache = new Map<string, number>();
   let totalSearched = 0;
 
   openHeap.push({
@@ -668,6 +670,38 @@ export const findDeepRoutePath = (
     seaCache.set(k, sea);
 
     return sea;
+  };
+
+  const getDeepGridCoastPenalty = (gp: GridPosition) => {
+    const k = gridKey(gp);
+    const cached = coastPenaltyCache.get(k);
+
+    if (cached !== undefined) {
+      return cached;
+    }
+
+    const center = gridToPosition(gp, columns, rows, gridSize);
+
+    for (let radius = 1; radius <= DEEP_ROUTE_COAST_RADIUS; radius += 1) {
+      for (let yOff = -radius; yOff <= radius; yOff += 1) {
+        for (let xOff = -radius; xOff <= radius; xOff += 1) {
+          const isPerimeter =
+            Math.abs(xOff) === radius || Math.abs(yOff) === radius;
+
+          if (
+            isPerimeter &&
+            !isWorldSea({ x: center.x + xOff, y: center.y + yOff })
+          ) {
+            const penalty = DEEP_ROUTE_COAST_RADIUS - radius + 1;
+            coastPenaltyCache.set(k, penalty);
+            return penalty;
+          }
+        }
+      }
+    }
+
+    coastPenaltyCache.set(k, 0);
+    return 0;
   };
 
   const promise = new Promise<Position[]>((resolve) => {
@@ -726,7 +760,10 @@ export const findDeepRoutePath = (
 
             if (!closedSet.has(neighborKey) && isInBounds && isAllowedSea) {
               const moveCost =
-                xDelta !== 0 && yDelta !== 0 ? Math.SQRT2 : 1;
+                (xDelta !== 0 && yDelta !== 0 ? Math.SQRT2 : 1) +
+                (neighborKey !== targetKey
+                  ? getDeepGridCoastPenalty(neighbor)
+                  : 0);
               const tentativeG =
                 (gScore.get(currentKey) ?? Infinity) + moveCost;
 
