@@ -11,7 +11,8 @@
     "test:e2e": "npm run build && (http-server build --silent & cypress run --browser chrome kill $!)",
     "test:e2e-firefox": "npm run build && (http-server build --silent & cypress run --browser firefox kill $!)",
     "test:e2e-edge": "npm run build && (http-server build --silent & cypress run --browser edge kill $!)",
-    "build": "rm -rf build/ && webpack --mode production"
+    "build": "rm -rf build/ && webpack --mode production",
+    "export-map": "node scripts/exportWorldMap.js"
   },
   "author": "Johan Li",
   "license": "MIT",
@@ -74,6 +75,7 @@
     "jest-mock": "^29.2.1",
     "lint-staged": "^13.0.3",
     "mini-css-extract-plugin": "^2.6.1",
+    "pngjs": "^7.0.0",
     "postcss": "^8.4.18",
     "postcss-loader": "^7.0.1",
     "prettier": "2.7.1",
