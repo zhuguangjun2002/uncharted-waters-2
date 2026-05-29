@@ -15,7 +15,9 @@ import {
   AUTO_NAVIGATION_STRATEGIES,
   DEFAULT_AUTO_NAVIGATION_STRATEGY_ID,
   createAutoNavigationPaths,
+  findDeepRoutePath,
   type AutoNavigationStrategyId,
+  type DeepRouteHandle,
 } from '../../game/world/autoNavigation';
 import { positionAdjacentToPort } from '../../state/selectors';
 
@@ -35,13 +37,19 @@ interface Props {
 }
 
 type PreviewStatus = 'dirty' | 'calculating' | 'ready' | 'failed';
+type DeepRouteStatus = 'idle' | 'computing' | 'ready' | 'failed';
 type PreviewPaths = Partial<Record<AutoNavigationStrategyId, Position[]>>;
 
 const STRATEGY_COLORS: Record<AutoNavigationStrategyId, string> = {
   balanced: '#38bdf8',
   detailed: '#f97316',
   offshore: '#a78bfa',
+  deep: '#4ade80',
 };
+
+const NAVIGABLE_STRATEGIES = AUTO_NAVIGATION_STRATEGIES.filter(
+  ({ id }) => id !== 'deep',
+);
 
 const portOptions = regularPorts
   .map(({ name }, i) => ({
@@ -181,6 +189,11 @@ export default function WorldMap({ position, autoNavigation }: Props) {
   const [status, setStatus] = useState('');
   const [previewPaths, setPreviewPaths] = useState<PreviewPaths>({});
   const [previewStatus, setPreviewStatus] = useState<PreviewStatus>('dirty');
+  const [deepRouteStatus, setDeepRouteStatus] =
+    useState<DeepRouteStatus>('idle');
+  const [deepRoutePath, setDeepRoutePath] = useState<Position[]>([]);
+  const [deepRouteNodes, setDeepRouteNodes] = useState(0);
+  const deepRouteHandleRef = useRef<DeepRouteHandle | null>(null);
   const [portFilter, setPortFilter] = useState('');
   const visiblePortOptions = useMemo(() => {
     const query = portFilter.trim().toLowerCase();
@@ -211,7 +224,7 @@ export default function WorldMap({ position, autoNavigation }: Props) {
 
     const context = canvasRef.current!.getContext('2d')!;
     context.drawImage(baseMapRef.current, 0, 0);
-    AUTO_NAVIGATION_STRATEGIES.forEach(({ id }) => {
+    NAVIGABLE_STRATEGIES.forEach(({ id }) => {
       drawPath(
         context,
         previewPaths[id] || [],
@@ -220,10 +233,20 @@ export default function WorldMap({ position, autoNavigation }: Props) {
         id === selectedStrategyId ? 2 : 1,
       );
     });
+    if (deepRoutePath.length) {
+      drawPath(
+        context,
+        deepRoutePath,
+        previewTargetPosition,
+        STRATEGY_COLORS.deep,
+        2,
+      );
+    }
     drawAutoNavigation(context, autoNavigation);
     drawPosition(context, position);
   }, [
     autoNavigation,
+    deepRoutePath,
     position,
     previewPaths,
     previewTargetPosition,
@@ -270,7 +293,65 @@ export default function WorldMap({ position, autoNavigation }: Props) {
   const handleSelectionChange = () => {
     setPreviewPaths({});
     setPreviewStatus('dirty');
-    setStatus('已更改目标或算法，请点击“预览航线”重新计算三种路线。');
+    deepRouteHandleRef.current?.abort();
+    deepRouteHandleRef.current = null;
+    setDeepRouteStatus('idle');
+    setDeepRoutePath([]);
+    setDeepRouteNodes(0);
+    setStatus('已更改目标，请点击”预览航线”重新计算三种路线。');
+  };
+
+  const handleCancelDeepRoute = () => {
+    deepRouteHandleRef.current?.abort();
+    deepRouteHandleRef.current = null;
+    setDeepRouteStatus('idle');
+    setDeepRoutePath([]);
+    setDeepRouteNodes(0);
+    setStatus('已取消深度搜索。');
+  };
+
+  const handleDeepRoute = () => {
+    deepRouteHandleRef.current?.abort();
+    setDeepRouteStatus('computing');
+    setDeepRoutePath([]);
+    setDeepRouteNodes(0);
+    setStatus(`正在深度搜索至 ${selectedPort.name} 的航线，请稍候...`);
+
+    let finalNodes = 0;
+
+    const handle = findDeepRoutePath(
+      position,
+      previewTargetPosition,
+      (nodesSearched) => {
+        finalNodes = nodesSearched;
+        setDeepRouteNodes(nodesSearched);
+        setStatus(
+          `深度搜索中... 已探索 ${nodesSearched.toLocaleString()} 个节点`,
+        );
+      },
+    );
+
+    deepRouteHandleRef.current = handle;
+
+    handle.promise.then((path) => {
+      if (deepRouteHandleRef.current !== handle) {
+        return;
+      }
+
+      deepRouteHandleRef.current = null;
+
+      if (path.length) {
+        setDeepRoutePath(path);
+        setDeepRouteNodes(finalNodes);
+        setDeepRouteStatus('ready');
+        setStatus(
+          `深度搜索完成：找到 ${selectedPort.name} 的航线（共探索 ${finalNodes.toLocaleString()} 个节点）。`,
+        );
+      } else {
+        setDeepRouteStatus('failed');
+        setStatus(`深度搜索失败：无法找到到 ${selectedPort.name} 的海上路线。`);
+      }
+    });
   };
 
   const commitPortAt = (index: number) => {
@@ -320,10 +401,10 @@ export default function WorldMap({ position, autoNavigation }: Props) {
       const paths = createAutoNavigationPaths(
         position,
         previewTargetPosition,
-        AUTO_NAVIGATION_STRATEGIES.map(({ id }) => id),
+        NAVIGABLE_STRATEGIES.map(({ id }) => id),
         getPreviewSearchBudget(position, previewTargetPosition),
       );
-      const availableStrategies = AUTO_NAVIGATION_STRATEGIES.filter(
+      const availableStrategies = NAVIGABLE_STRATEGIES.filter(
         ({ id }) => (paths[id] || []).length,
       );
 
@@ -338,10 +419,38 @@ export default function WorldMap({ position, autoNavigation }: Props) {
   };
 
   const handleStartAutoNavigation = () => {
+    const isDeepReady = deepRouteStatus === 'ready' && deepRoutePath.length > 0;
     const selectedPath = previewPaths[selectedStrategyId] || [];
+    const canStart = isDeepReady || (previewStatus === 'ready' && selectedPath.length > 0);
 
-    if (previewStatus !== 'ready' || !selectedPath.length) {
-      setStatus('请先点击“预览航线”，并选择一条有颜色路线的算法。');
+    if (!canStart) {
+      setStatus(
+        '请先点击”预览航线”，选择一条有颜色路线的算法；或使用”深度搜索”规划超远距离航线。',
+      );
+      return;
+    }
+
+    if (isDeepReady) {
+      const result = startAutoNavigation(
+        selectedPortId,
+        position,
+        'deep',
+        deepRoutePath,
+      );
+
+      if (result === 'started') {
+        setStatus(
+          `自动导航已开始：${selectedPort.name}，超远航线。按 F4 关闭地图查看航行。`,
+        );
+        return;
+      }
+
+      if (result === 'already-there') {
+        setStatus(`已经在 ${selectedPort.name} 附近。可按 E 靠港。`);
+        return;
+      }
+
+      setStatus(`无法规划到 ${selectedPort.name} 的海上航线。`);
       return;
     }
 
@@ -401,7 +510,7 @@ export default function WorldMap({ position, autoNavigation }: Props) {
               setStatus('已切换实际运行算法；地图上的三种预览路线保持不变。');
             }}
           >
-            {AUTO_NAVIGATION_STRATEGIES.map(({ id, name }) => (
+            {NAVIGABLE_STRATEGIES.map(({ id, name }) => (
               <option key={id} value={id}>
                 {name}
               </option>
@@ -415,6 +524,33 @@ export default function WorldMap({ position, autoNavigation }: Props) {
           >
             {previewStatus === 'calculating' ? '计算中' : '预览航线'}
           </button>
+          {(previewStatus === 'failed' ||
+            deepRouteStatus === 'computing' ||
+            deepRouteStatus === 'ready' ||
+            deepRouteStatus === 'failed') && (
+            <button
+              className={`border px-3 py-1 text-base disabled:text-slate-500 ${
+                deepRouteStatus === 'computing'
+                  ? 'border-lime-700 text-lime-400 hover:bg-slate-800'
+                  : deepRouteStatus === 'ready'
+                    ? 'border-lime-500 text-lime-300 hover:bg-slate-800'
+                    : 'border-slate-500 hover:bg-slate-800'
+              }`}
+              disabled={deepRouteStatus === 'computing'}
+              type="button"
+              onClick={
+                deepRouteStatus === 'computing'
+                  ? handleCancelDeepRoute
+                  : handleDeepRoute
+              }
+            >
+              {deepRouteStatus === 'computing'
+                ? '搜索中...'
+                : deepRouteStatus === 'ready'
+                  ? '重新深度搜索'
+                  : '深度搜索'}
+            </button>
+          )}
           <button
             className="border border-slate-500 px-3 py-1 text-base hover:bg-slate-800"
             type="button"
@@ -483,11 +619,14 @@ export default function WorldMap({ position, autoNavigation }: Props) {
           </div>
           <div className="text-sm text-slate-400">
             黄色为正在执行的自动导航航线。预览颜色：
-            {AUTO_NAVIGATION_STRATEGIES.map(({ id, name }) => (
+            {NAVIGABLE_STRATEGIES.map(({ id, name }) => (
               <span key={id} className="ml-3">
                 <span style={{ color: STRATEGY_COLORS[id] }}>■</span> {name}
               </span>
             ))}
+            <span className="ml-3">
+              <span style={{ color: STRATEGY_COLORS.deep }}>■</span> 超远航线
+            </span>
             {selectedStrategy.description}
           </div>
           <div className="text-xs text-slate-500">
@@ -495,6 +634,46 @@ export default function WorldMap({ position, autoNavigation }: Props) {
             实际黄色航线可能与预览略有差异。
           </div>
         </div>
+        {deepRouteStatus === 'computing' && (
+          <div className="mt-3 border border-lime-800 bg-slate-950 px-3 py-2 text-sm text-lime-300">
+            <div className="mb-1 flex items-center justify-between">
+              <span>
+                深度搜索中... 已探索{' '}
+                <span className="font-mono">
+                  {deepRouteNodes.toLocaleString()}
+                </span>{' '}
+                个节点
+              </span>
+              <button
+                className="border border-slate-500 px-2 py-0.5 text-xs text-slate-400 hover:bg-slate-800"
+                type="button"
+                onClick={handleCancelDeepRoute}
+              >
+                取消
+              </button>
+            </div>
+            <div className="h-2 overflow-hidden border border-lime-900 bg-slate-900">
+              <div className="h-full w-full animate-pulse bg-lime-500" />
+            </div>
+            <div className="mt-1 text-xs text-slate-500">
+              使用 4×4 精细网格、无海岸惩罚，确保穿越海峡。算法分块执行，界面保持响应。
+            </div>
+          </div>
+        )}
+        {deepRouteStatus === 'ready' && (
+          <div className="mt-3 border border-lime-700 bg-slate-950 px-3 py-2 text-sm text-lime-300">
+            <div className="flex items-center justify-between">
+              <span>
+                <span style={{ color: STRATEGY_COLORS.deep }}>■</span>{' '}
+                超远航线就绪（共探索{' '}
+                <span className="font-mono">
+                  {deepRouteNodes.toLocaleString()}
+                </span>{' '}
+                个节点）—— 点击"自动导航"出发。
+              </span>
+            </div>
+          </div>
+        )}
         {autoNavigation.enabled && (
           <div className="mt-3 border border-slate-600 bg-slate-950 px-3 py-2 text-sm text-slate-300">
             <div className="mb-1 flex items-center justify-between">

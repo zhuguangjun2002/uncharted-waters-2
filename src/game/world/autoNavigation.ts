@@ -36,7 +36,7 @@ interface PathOptions {
   useCoastPenalty?: boolean;
 }
 
-export type AutoNavigationStrategyId = 'balanced' | 'detailed' | 'offshore';
+export type AutoNavigationStrategyId = 'balanced' | 'detailed' | 'offshore' | 'deep';
 
 interface AutoNavigationStrategy {
   id: AutoNavigationStrategyId;
@@ -66,6 +66,12 @@ export const AUTO_NAVIGATION_STRATEGIES: AutoNavigationStrategy[] = [
     name: '远海航线',
     description: '先用 12 x 12 规划全程，失败后退回 8 x 8 和 4 x 4。',
     gridSizes: [COARSE_GRID_SIZE, DEFAULT_GRID_SIZE, FINE_GRID_SIZE],
+  },
+  {
+    id: 'deep',
+    name: '超远航线',
+    description: '分块深度搜索，支持横跨全球的超远距离航线，计算时间较长。',
+    gridSizes: [],
   },
 ];
 
@@ -573,7 +579,7 @@ export const getAutoNavigationHeading = (
 export const createAutoNavigationPath = (
   start: Position,
   target: Position,
-  strategyId = DEFAULT_AUTO_NAVIGATION_STRATEGY_ID,
+  strategyId: AutoNavigationStrategyId = DEFAULT_AUTO_NAVIGATION_STRATEGY_ID,
   maxSearchedNodes = Number.POSITIVE_INFINITY,
   useCoastPenalty = true,
 ) => {
@@ -605,6 +611,161 @@ const getPreviewGridBudgetMultiplier = (gridSize: number) => {
   }
 
   return 2;
+};
+
+const DEEP_ROUTE_CHUNK_NODES = 3000;
+
+export interface DeepRouteHandle {
+  promise: Promise<Position[]>;
+  abort: () => void;
+}
+
+export const findDeepRoutePath = (
+  start: Position,
+  target: Position,
+  onProgress: (nodesSearched: number) => void,
+): DeepRouteHandle => {
+  let aborted = false;
+  const gridSize = FINE_GRID_SIZE;
+  const columns = WORLD_MAP_COLUMNS;
+  const rows = WORLD_MAP_ROWS;
+  const gridColumns = getGridColumns(columns, gridSize);
+  const gridRows = getGridRows(rows, gridSize);
+  const startGrid = positionToGrid(start, columns, rows, gridSize);
+  const targetGrid = positionToGrid(target, columns, rows, gridSize);
+  const startKey = gridKey(startGrid);
+  const targetKey = gridKey(targetGrid);
+
+  const openHeap = createOpenHeap();
+  let heapSequence = 0;
+  const cameFrom = new Map<string, string>();
+  const positions = new Map<string, GridPosition>([
+    [startKey, startGrid],
+    [targetKey, targetGrid],
+  ]);
+  const gScore = new Map<string, number>([[startKey, 0]]);
+  const closedSet = new Set<string>();
+  const seaCache = new Map<string, boolean>();
+  let totalSearched = 0;
+
+  openHeap.push({
+    position: startGrid,
+    key: startKey,
+    fScore: getHeuristic(startGrid, targetGrid, gridColumns),
+    sequence: heapSequence,
+  });
+  heapSequence += 1;
+
+  const isDeepGridSea = (gp: GridPosition) => {
+    const k = gridKey(gp);
+    const cached = seaCache.get(k);
+
+    if (cached !== undefined) {
+      return cached;
+    }
+
+    const sea = isWorldSea(gridToPosition(gp, columns, rows, gridSize));
+    seaCache.set(k, sea);
+
+    return sea;
+  };
+
+  const promise = new Promise<Position[]>((resolve) => {
+    const runChunk = () => {
+      if (aborted) {
+        resolve([]);
+        return;
+      }
+
+      let chunkNodes = 0;
+
+      while (openHeap.size > 0 && chunkNodes < DEEP_ROUTE_CHUNK_NODES) {
+        const { position: current, key: currentKey } = openHeap.pop();
+
+        if (closedSet.has(currentKey)) {
+          continue;
+        }
+
+        chunkNodes += 1;
+        totalSearched += 1;
+        closedSet.add(currentKey);
+
+        if (currentKey === targetKey) {
+          const gridPath = reconstructPath(cameFrom, currentKey, positions);
+
+          if (!gridPath.length) {
+            resolve([]);
+            return;
+          }
+
+          resolve(
+            gridPath
+              .slice(1)
+              .map((gp) => gridToPosition(gp, columns, rows, gridSize))
+              .concat(target),
+          );
+          return;
+        }
+
+        for (let yDelta = -1; yDelta <= 1; yDelta += 1) {
+          for (let xDelta = -1; xDelta <= 1; xDelta += 1) {
+            if (xDelta === 0 && yDelta === 0) {
+              continue;
+            }
+
+            const neighbor: GridPosition = {
+              x: (current.x + xDelta + gridColumns) % gridColumns,
+              y: current.y + yDelta,
+            };
+            const neighborKey = gridKey(neighbor);
+            const isInBounds = neighbor.y >= 0 && neighbor.y < gridRows;
+            const isAllowedSea =
+              neighborKey === targetKey ||
+              neighborKey === startKey ||
+              isDeepGridSea(neighbor);
+
+            if (!closedSet.has(neighborKey) && isInBounds && isAllowedSea) {
+              const moveCost =
+                xDelta !== 0 && yDelta !== 0 ? Math.SQRT2 : 1;
+              const tentativeG =
+                (gScore.get(currentKey) ?? Infinity) + moveCost;
+
+              if (tentativeG < (gScore.get(neighborKey) ?? Infinity)) {
+                cameFrom.set(neighborKey, currentKey);
+                positions.set(neighborKey, neighbor);
+                gScore.set(neighborKey, tentativeG);
+                openHeap.push({
+                  position: neighbor,
+                  key: neighborKey,
+                  fScore:
+                    tentativeG + getHeuristic(neighbor, targetGrid, gridColumns),
+                  sequence: heapSequence,
+                });
+                heapSequence += 1;
+              }
+            }
+          }
+        }
+      }
+
+      if (openHeap.size === 0) {
+        resolve([]);
+        return;
+      }
+
+      onProgress(totalSearched);
+      setTimeout(runChunk, 0);
+    };
+
+    setTimeout(runChunk, 0);
+  });
+
+  return {
+    promise,
+    abort: () => {
+      aborted = true;
+    },
+  };
 };
 
 export const createAutoNavigationPaths = (
