@@ -23,6 +23,8 @@ PNG、OGG 等资源通过 Git LFS 管理，本地运行前需要先安装 Git LF
 
 - 可以在 130 个 ports 中任意行走，并进入其中的 buildings。
 - 可以在 world map 上航行，航速会纳入原版游戏中的全部影响因素。
+- 按 `F3` 打开存档面板，提供 10 个存档位，支持保存、读取、删除和重新开始（保存在浏览器
+  `localStorage`）。
 
 可以在 [https://johan.li/uncharted-waters-2/](https://johan.li/uncharted-waters-2/)
 游玩本项目。
@@ -76,7 +78,7 @@ State changes，例如读取 Input 并将其转换为 movement，并不会在每
 
 #### 后续考虑
 
-- Players 需要 save 和 resume 能力：State 以及部分 local state 需要 serialization，
-  并存储到 localStorage、server，或两者同时使用。
+- 存档现已落地（10 个存档位写入 `localStorage`），后续可考虑同步到 server，并把 NPC
+  舰队位置纳入存档。
 - 使用 service worker，让游戏可以 offline 游玩。
 - 为 NPC fleets 增加 pathfinding。
