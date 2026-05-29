@@ -7,6 +7,7 @@ import { getPlayerFleet } from './selectorsFleet';
 import createMap from '../map';
 import { applyPositionDelta } from '../utils';
 import getSailor from '../data/sailorData';
+import type { Position } from '../types';
 
 export const getTimeOfDay = () => state.timePassed % 1440;
 
@@ -38,6 +39,34 @@ export const positionAdjacentToPort = (portId: string) => {
   }
 
   return positionNoCollision;
+};
+
+/*
+  Returns the given position if it's navigable, otherwise spiral-searches
+  outward for the nearest sea tile. Used by debug teleport so dropping the
+  player onto land (or an inland lat/lng) still lands them in nearby water.
+*/
+export const nearestSeaPosition = (position: Position) => {
+  const map = createMap([0, 0]);
+
+  if (!map.collisionAt(position)) {
+    return position;
+  }
+
+  for (let radius = 1; radius <= 60; radius += 1) {
+    for (let dy = -radius; dy <= radius; dy += 1) {
+      for (let dx = -radius; dx <= radius; dx += 1) {
+        const onRingEdge = Math.abs(dx) === radius || Math.abs(dy) === radius;
+        const candidate = applyPositionDelta(position, { x: dx, y: dy });
+
+        if (onRingEdge && !map.collisionAt(candidate)) {
+          return candidate;
+        }
+      }
+    }
+  }
+
+  return position;
 };
 
 export const finishedQuest = (id: QuestId) => state.quests.includes(id);

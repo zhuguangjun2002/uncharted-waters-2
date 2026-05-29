@@ -1,6 +1,8 @@
 import state, { getDefaultAutoNavigation } from './state';
 import { portAdjacentAt } from '../game/port/portUtils';
 import createPort from '../game/port/port';
+import type { Port } from '../game/port/port';
+import type { World } from '../game/world/world';
 import Input from '../input';
 import updateInterface from './updateInterface';
 import { updateGeneral } from './actionsPort';
@@ -19,6 +21,7 @@ import {
 import { START_DATE } from '../constants';
 import {
   getTimeOfDay,
+  nearestSeaPosition,
   positionAdjacentToPort,
   shouldUpdateWorldStatus,
 } from './selectors';
@@ -210,6 +213,67 @@ export const setDockedFleetPositions = () => {
   if (!playerFleet.position) {
     playerFleet.position = positionAdjacentToPort(state.portId || '1');
   }
+};
+
+/*
+  Debug teleport. Clears the runtime scene objects so the game loop rebuilds
+  world/port at the new location (same approach as loading a save).
+*/
+const rebuildScene = () => {
+  state.world = undefined as unknown as World;
+  state.port = undefined as unknown as Port;
+};
+
+export const teleportToSea = (position: Position): Position => {
+  const target = nearestSeaPosition(position);
+
+  state.fleets[1].position = target;
+  state.portId = null;
+  state.buildingId = null;
+
+  cancelAutoNavigation();
+  rebuildScene();
+  Input.reset();
+
+  updateGeneral();
+  updateWorldStatus();
+  updateProvisions();
+
+  return target;
+};
+
+export const teleportToPort = (
+  portId: string,
+  dockHere: boolean,
+): Position => {
+  const position = positionAdjacentToPort(portId);
+
+  if (!dockHere) {
+    return teleportToSea(position);
+  }
+
+  state.fleets[1].position = position;
+  state.portId = portId;
+  state.buildingId = null;
+
+  cancelAutoNavigation();
+  rebuildScene();
+  Input.reset();
+
+  updateGeneral();
+
+  // The F4 world map only auto-hides while the world loop runs; once we dock
+  // the loop stops touching it, so hide it explicitly.
+  updateInterface.worldMap({
+    visible: false,
+    position,
+    autoNavigation: state.autoNavigation,
+  });
+
+  state.dayAtSea = 0;
+  updateInterface.dayAtSea(state.dayAtSea);
+
+  return position;
 };
 
 export const setSail = () => {

@@ -3,12 +3,15 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
 
 import Assets from '../../assets';
-import { WORLD_MAP_COLUMNS } from '../../constants';
+import { DEBUG, WORLD_MAP_COLUMNS } from '../../constants';
 import { regularPorts, supplyPorts } from '../../data/portData';
 import {
   cancelAutoNavigation,
   startAutoNavigation,
+  teleportToPort,
+  teleportToSea,
 } from '../../state/actionsWorld';
+import { latLngToWorld, worldToLatLng } from '../../game/world/geo';
 import type { AutoNavigationState } from '../../state/state';
 import type { Position } from '../../types';
 import {
@@ -301,6 +304,10 @@ export default function WorldMap({ position, autoNavigation }: Props) {
     () => positionAdjacentToPort(selectedPortId),
     [selectedPortId],
   );
+  const [clickTeleport, setClickTeleport] = useState(false);
+  const [dockHere, setDockHere] = useState(false);
+  const [xyInput, setXyInput] = useState('');
+  const [latLngInput, setLatLngInput] = useState('');
 
   useEffect(() => {
     if (!baseMapRef.current) {
@@ -576,14 +583,80 @@ export default function WorldMap({ position, autoNavigation }: Props) {
     }, 50);
   };
 
+  const announceTeleport = (target: Position) => {
+    const { lat, lng } = worldToLatLng(target);
+    setStatus(
+      `已传送到 x=${target.x}, y=${target.y}（约 ${lat.toFixed(1)}°, ${lng.toFixed(
+        1,
+      )}°）。`,
+    );
+  };
+
+  const parsePair = (value: string): [number, number] | null => {
+    const parts = value.split(/[,\s]+/).map(Number);
+
+    if (parts.length !== 2 || parts.some((n) => Number.isNaN(n))) {
+      return null;
+    }
+
+    return [parts[0], parts[1]];
+  };
+
+  const handleTeleportXY = () => {
+    const pair = parsePair(xyInput);
+
+    if (!pair) {
+      setStatus('请输入合法的 x,y（例如 840,358）。');
+      return;
+    }
+
+    announceTeleport(teleportToSea({ x: pair[0], y: pair[1] }));
+  };
+
+  const handleTeleportLatLng = () => {
+    const pair = parsePair(latLngInput);
+
+    if (!pair) {
+      setStatus('请输入合法的 纬度,经度（例如 38.7,-9.1）。');
+      return;
+    }
+
+    announceTeleport(teleportToSea(latLngToWorld(pair[0], pair[1])));
+  };
+
+  const handleTeleportToPort = () => {
+    const target = teleportToPort(selectedPortId, dockHere);
+    setStatus(
+      dockHere
+        ? `已直接靠港：${selectedPort.name}。`
+        : `已传送到 ${selectedPort.name} 附近海域（x=${target.x}, y=${target.y}）。`,
+    );
+  };
+
+  const handleMapClick = (e: React.MouseEvent<HTMLCanvasElement>) => {
+    if (!clickTeleport) {
+      return;
+    }
+
+    const rect = e.currentTarget.getBoundingClientRect();
+    const x = Math.floor(((e.clientX - rect.left) / rect.width) * WORLD_MAP_COLUMNS);
+    const y = Math.floor(((e.clientY - rect.top) / rect.height) * WORLD_MAP_ROWS);
+
+    announceTeleport(teleportToSea({ x, y }));
+  };
+
+  const currentLatLng = worldToLatLng(position);
+
   return (
     <div className="absolute inset-0 z-10 flex items-center justify-center bg-black/80">
       <div className="border-4 border-slate-300 bg-black p-4 text-slate-200">
+        {/* eslint-disable-next-line jsx-a11y/no-noninteractive-element-interactions */}
         <canvas
           ref={canvasRef}
           width={MAP_WIDTH}
           height={MAP_HEIGHT}
-          className="w-[1080px] h-[540px]"
+          className={`w-[1080px] h-[540px] ${clickTeleport ? 'cursor-crosshair' : ''}`}
+          onClick={handleMapClick}
         />
         <div className="mt-3 flex items-center gap-3 text-xl">
           <div className="w-36">F4 世界地图</div>
@@ -657,6 +730,77 @@ export default function WorldMap({ position, autoNavigation }: Props) {
             取消
           </button>
         </div>
+        {DEBUG && (
+          <div className="mt-2 border border-fuchsia-700 bg-slate-950 px-3 py-2 text-sm text-fuchsia-200">
+            <div className="mb-2">
+              调试传送（仅开发可见）· 当前 x={Math.round(position.x)}, y=
+              {Math.round(position.y)} · 约 {currentLatLng.lat.toFixed(1)}°,{' '}
+              {currentLatLng.lng.toFixed(1)}°
+            </div>
+            <div className="flex flex-wrap items-center gap-x-3 gap-y-2">
+              {/* eslint-disable-next-line jsx-a11y/label-has-associated-control */}
+              <label className="flex items-center gap-1">
+                <input
+                  type="checkbox"
+                  checked={clickTeleport}
+                  onChange={(e) => setClickTeleport(e.target.checked)}
+                />
+                点击地图传送
+              </label>
+              <span className="text-slate-600">|</span>
+              <span>x,y</span>
+              <input
+                className="w-28 bg-slate-900 border border-slate-500 px-2 py-0.5 text-slate-100"
+                type="text"
+                value={xyInput}
+                placeholder="840,358"
+                onChange={(e) => setXyInput(e.target.value)}
+                onKeyDown={(e) => e.key === 'Enter' && handleTeleportXY()}
+              />
+              <button
+                className="border border-slate-500 px-2 py-0.5 hover:bg-slate-800"
+                type="button"
+                onClick={handleTeleportXY}
+              >
+                传送
+              </button>
+              <span className="text-slate-600">|</span>
+              <span>纬度,经度</span>
+              <input
+                className="w-28 bg-slate-900 border border-slate-500 px-2 py-0.5 text-slate-100"
+                type="text"
+                value={latLngInput}
+                placeholder="38.7,-9.1"
+                onChange={(e) => setLatLngInput(e.target.value)}
+                onKeyDown={(e) => e.key === 'Enter' && handleTeleportLatLng()}
+              />
+              <button
+                className="border border-slate-500 px-2 py-0.5 hover:bg-slate-800"
+                type="button"
+                onClick={handleTeleportLatLng}
+              >
+                传送
+              </button>
+              <span className="text-slate-600">|</span>
+              <button
+                className="border border-slate-500 px-2 py-0.5 hover:bg-slate-800"
+                type="button"
+                onClick={handleTeleportToPort}
+              >
+                传送到 {selectedPort.name}
+              </button>
+              {/* eslint-disable-next-line jsx-a11y/label-has-associated-control */}
+              <label className="flex items-center gap-1">
+                <input
+                  type="checkbox"
+                  checked={dockHere}
+                  onChange={(e) => setDockHere(e.target.checked)}
+                />
+                直接靠港
+              </label>
+            </div>
+          </div>
+        )}
         <div className="mt-2 border border-slate-700 bg-slate-950 px-3 py-2 font-mono text-base">
           {visiblePortOptions.length === 0 ? (
             <div className="text-slate-500">无匹配港口</div>

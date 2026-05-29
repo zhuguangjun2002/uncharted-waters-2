@@ -161,6 +161,72 @@ F4 世界地图缩略图也用同一个 `tile >= 50` 阈值，把每格画成绿
 
 换句话说，tilemap 只负责“海陆地形长什么样”，风/流/港口是平行的数据层。
 
+## 坐标系与经纬度换算
+
+游戏里同时存在三套坐标，理解它们之间的换算对调试和导出都很重要。
+
+### 1. 世界格坐标（world tile）
+
+游戏内部最权威的坐标系，也是 `state.fleets[1].position`、港口 `position`、tilemap 索引用的坐标。
+
+- 原点 `(0, 0)` 在左上角，x 向东、y 向南。
+- `x ∈ [0, 2160)`，**横向环绕**（`getXWrapAround`）。
+- `y ∈ [0, 1080)`，纵向不环绕。
+
+### 2. 缩略图坐标（minimap）
+
+F4 世界地图把世界线性缩放到一张小图。`drawBaseMap()` 内部画布是 `MAP_WIDTH × MAP_HEIGHT`
+（`720 × 360`），但用 CSS 显示成 `1080 × 540`。换算见 `toMapPosition()`：
+
+```ts
+const toMapPosition = ({ x, y }) => ({
+  x: Math.floor((x / WORLD_MAP_COLUMNS) * MAP_WIDTH),
+  y: Math.floor((y / WORLD_MAP_ROWS) * MAP_HEIGHT),
+});
+```
+
+**反向：缩略图点击 → 世界格坐标。** 用点击点相对显示尺寸的比例还原（不要用内部 720×360，
+要用 `getBoundingClientRect()` 拿实际显示尺寸）：
+
+```ts
+const rect = canvas.getBoundingClientRect();
+const x = Math.floor(((clientX - rect.left) / rect.width) * WORLD_MAP_COLUMNS);
+const y = Math.floor(((clientY - rect.top) / rect.height) * WORLD_MAP_ROWS);
+```
+
+### 3. 地球经纬度（lat/lng）
+
+世界地图近似**等距圆柱投影**，所以经纬度和世界格坐标近似线性关系。换算实现在
+[src/game/world/geo.ts](/home/laozhu/project/uncharted-waters-2/src/game/world/geo.ts)：
+
+```
+x = (895 + lng * 6) mod 2160     // 经度，6 = 2160 / 360 格每度
+y = 631 - lat * 7.06             // 纬度，y 向南为正
+```
+
+常量来历：
+
+- `PX_PER_LNG = 2160 / 360 = 6`：经度跨满 360° 正好绕地图一圈，是精确值。
+- `LNG_ORIGIN_X = 895`：经度 0° 对应的 x，由 Lisbon 等港口反推。
+- `PX_PER_LAT = 7.06`、`LAT_ORIGIN_Y = 631`：纬度方向用几个已知港口**线性拟合**得到。注意
+  `1080 / 7.06 ≈ 153°`，说明地图纵向并未覆盖完整的极区。
+
+这是**近似**换算，用已知港口校验的误差（格）：
+
+| 港口 | 计算 (x,y) | 实际 (x,y) | 误差 |
+|---|---|---|---|
+| Lisbon | 840,358 | 840,358 | 0 / 0 |
+| Istanbul | 1069,342 | 1072,344 | 3 / 2 |
+| Nagasaki | 1674,400 | 1676,402 | 2 / 2 |
+| London | 894,267 | 900,262 | 6 / 5 |
+| Calicut | 1350,552 | 1348,552 | 2 / 0 |
+
+误差在个位数格内，足够“跳到大体位置”这类用途。要更精确可以用更多港口重新拟合，或对纬度
+改用非线性映射。
+
+这三套坐标的互转，正是“调试传送”功能的基础，详见
+[DEBUG_TELEPORT.md](/home/laozhu/project/uncharted-waters-2/DEBUG_TELEPORT.md)。
+
 ## 导出完整世界地图 PNG
 
 脚本 [scripts/exportWorldMap.js](/home/laozhu/project/uncharted-waters-2/scripts/exportWorldMap.js)
@@ -202,5 +268,5 @@ node scripts/exportWorldMap.js --out=map.png    # 指定输出路径
 ## 想进一步扩展
 
 - 叠加港口标记：读 `src/data/portData.ts` 的坐标，按相同比例在导出图上画点。
-- 叠加经纬度/海域网格：参考 `windCurrent.ts` 的海域划分。
+- 叠加经纬度网格：用 `geo.ts` 的换算在导出图上画经纬线（海域划分可参考 `windCurrent.ts`）。
 - 导出动画/分时段图：循环 `--row 0–30` 输出多张图，拼成昼夜变化。
