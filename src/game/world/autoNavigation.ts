@@ -614,7 +614,7 @@ const getPreviewGridBudgetMultiplier = (gridSize: number) => {
 };
 
 const DEEP_ROUTE_CHUNK_NODES = 3000;
-const DEEP_ROUTE_COAST_RADIUS = 2; // check 2 grid-cells out: adjacent=penalty 2, one-step-out=penalty 1
+const DEEP_ROUTE_COAST_RADIUS = 3; // check 3 grid-cells out: penalty 3/2/1 — keeps bays expensive vs open-sea detour
 
 export interface DeepRouteHandle {
   promise: Promise<Position[]>;
