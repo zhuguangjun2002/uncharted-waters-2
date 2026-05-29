@@ -91,12 +91,16 @@ export const updateAutoNavigation = (position: Position): Direction | '' => {
     lastPosition,
     stagnantMoves,
     useAlternateAxis,
+    newPath,
   } = getAutoNavigationHeading(position, state.autoNavigation);
 
   state.autoNavigation.waypointIndex = waypointIndex;
   state.autoNavigation.lastPosition = lastPosition;
   state.autoNavigation.stagnantMoves = stagnantMoves;
   state.autoNavigation.useAlternateAxis = useAlternateAxis;
+  if (newPath) {
+    state.autoNavigation.path = newPath;
+  }
 
   if (arrived) {
     cancelAutoNavigation();

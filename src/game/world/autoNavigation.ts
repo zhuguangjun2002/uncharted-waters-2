@@ -12,12 +12,18 @@ const DEFAULT_GRID_SIZE = 8;
 const FINE_GRID_SIZE = 4;
 const COARSE_GRID_SIZE = 12;
 const REACHED_WAYPOINT_DISTANCE = DEFAULT_GRID_SIZE * 4;
+const DEEP_ROUTE_REACHED_WAYPOINT_DISTANCE = DEFAULT_GRID_SIZE * 8;
 const REACHED_TARGET_DISTANCE = 8;
 const DIRECTION_DEAD_ZONE = 1;
 const COAST_PENALTY_RADIUS = 16;
 const DIAGONAL_OPEN_SEA_RADIUS = 6;
 const STAGNANT_MOVE_DISTANCE = 0.001;
 const STAGNANT_MOVES_BEFORE_ALTERNATE_AXIS = 12;
+const DEEP_ROUTE_STAGNANT_SKIP_THRESHOLD = STAGNANT_MOVES_BEFORE_ALTERNATE_AXIS;
+const DEEP_ROUTE_STAGNANT_SKIP_COUNT = 4;
+const DEEP_ROUTE_DETOUR_MIN_DISTANCE = 100;
+const DEEP_ROUTE_DETOUR_MAX_SEARCH = 200;
+const DEEP_ROUTE_DETOUR_MAX_NODES = 2000;
 const PREVIEW_SEARCHED_GRID_NODES = 400;
 
 interface GridPosition {
@@ -460,10 +466,11 @@ const getDistance = (from: Position, to: Position) => {
 const getReachedDistance = (
   waypointIndex: number,
   autoNavigation: AutoNavigationState,
-) =>
-  waypointIndex === autoNavigation.path.length - 1
-    ? REACHED_TARGET_DISTANCE
-    : REACHED_WAYPOINT_DISTANCE;
+) => {
+  if (waypointIndex === autoNavigation.path.length - 1) return REACHED_TARGET_DISTANCE;
+  if (autoNavigation.strategyId === 'deep') return DEEP_ROUTE_REACHED_WAYPOINT_DISTANCE;
+  return REACHED_WAYPOINT_DISTANCE;
+};
 
 export const getDirectionToPosition = (
   from: Position,
@@ -538,6 +545,76 @@ export const getAutoNavigationHeading = (
 
   if (stagnantMoves >= STAGNANT_MOVES_BEFORE_ALTERNATE_AXIS) {
     useAlternateAxis = true;
+  }
+
+  // Deep-route waypoints are only 4 px apart; when stuck, find a waypoint
+  // at least DEEP_ROUTE_DETOUR_MIN_DISTANCE px away (physical distance, not
+  // waypoint count) and run a local A* detour to it. Never targets the final
+  // waypoint so the middle section of the global path is never discarded.
+  if (
+    autoNavigation.strategyId === 'deep' &&
+    stagnantMoves >= DEEP_ROUTE_STAGNANT_SKIP_THRESHOLD
+  ) {
+    // Walk ahead until we find a waypoint far enough away (distance-based).
+    // Cap at path.length - 2 so we never target the final destination.
+    const maxSearchIdx = Math.min(
+      waypointIndex + DEEP_ROUTE_DETOUR_MAX_SEARCH,
+      autoNavigation.path.length - 2,
+    );
+    let detourTargetIdx = waypointIndex + 1;
+    while (
+      detourTargetIdx < maxSearchIdx &&
+      getDistance(position, autoNavigation.path[detourTargetIdx]) <
+        DEEP_ROUTE_DETOUR_MIN_DISTANCE
+    ) {
+      detourTargetIdx += 1;
+    }
+
+    stagnantMoves = 0;
+    useAlternateAxis = false;
+
+    const targetIsReachable =
+      detourTargetIdx < autoNavigation.path.length - 1 &&
+      getDistance(position, autoNavigation.path[detourTargetIdx]) >=
+        DEEP_ROUTE_DETOUR_MIN_DISTANCE;
+
+    if (targetIsReachable) {
+      const detourSegment = findSeaPath({
+        start: position,
+        target: autoNavigation.path[detourTargetIdx],
+        isSea: isWorldSea,
+        gridSize: DEFAULT_GRID_SIZE,
+        maxSearchedNodes: DEEP_ROUTE_DETOUR_MAX_NODES,
+      });
+
+      if (detourSegment.length > 0) {
+        const newPath = [
+          ...autoNavigation.path.slice(0, waypointIndex),
+          ...detourSegment,
+          ...autoNavigation.path.slice(detourTargetIdx),
+        ];
+        return {
+          heading: getDirectionToPosition(
+            position,
+            detourSegment[0],
+            false,
+            isOpenSeaForDiagonalHeading(position),
+          ),
+          waypointIndex,
+          arrived: false,
+          lastPosition: position,
+          stagnantMoves: 0,
+          useAlternateAxis: false,
+          newPath,
+        };
+      }
+    }
+
+    // detour skipped or A* exhausted budget — nudge ahead a few waypoints
+    waypointIndex = Math.min(
+      waypointIndex + DEEP_ROUTE_STAGNANT_SKIP_COUNT,
+      autoNavigation.path.length - 1,
+    );
   }
 
   while (

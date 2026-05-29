@@ -262,12 +262,11 @@ useAlternateAxis = true;
 
 当前有两种到达距离：
 
-- 普通 waypoint：`REACHED_WAYPOINT_DISTANCE`
-- 最终目标点：`REACHED_TARGET_DISTANCE`
+- 普通 waypoint：`REACHED_WAYPOINT_DISTANCE`（普通策略 = 32px）
+- 超远航线 waypoint：`DEEP_ROUTE_REACHED_WAYPOINT_DISTANCE`（= 64px）
+- 最终目标点：`REACHED_TARGET_DISTANCE`（= 8px）
 
-普通 waypoint 到达半径较大，避免船为了精确命中贴岸 waypoint 而卡住。
-
-最终目标点到达半径较小，避免离目标港太远就结束自动导航。
+普通 waypoint 到达半径较大，避免船为了精确命中贴岸 waypoint 而卡住。超远航线的 waypoint 间距只有 4px，64px 前视距离能自然跳过贴岸点，防止在海峡窄口卡死。最终目标点到达半径较小，避免离目标港太远就结束自动导航。
 
 ## Bug 记录：Lisbon 到 Barcelona 无法规划航线
 
@@ -525,6 +524,52 @@ Lisbon 到 Macao 必须经过马六甲海峡（宽度约 20–40 tile）。在 `
 - 运行真实 world tilemap 仿真，确认 Lisbon -> Hormuz、Lisbon -> Mombasa balanced/offshore 仍能到达。
 - `npm test -- --runTestsByPath src/game/world/autoNavigation.test.ts`
 - `npm run lint`
+
+## Bug 记录：超远航线在马六甲、好望角反复卡住
+
+记录日期：2026-05-29
+
+### 问题现象
+
+从 Lisbon 出发使用超远航线导航到 Macao，途中在两个地点反复卡住：
+
+1. **马六甲海峡**（约 x=1486, y=615）：船贴着马来半岛东岸，`useAlternateAxis=true`，连续停滞达数百次。
+2. **好望角以北**（约 x=1002, y=850）：船卡在南非西岸凹形海湾，停滞计数在 0–12 之间反复振荡，永远触发不了逃脱阈值。
+
+### 根因一：useAlternateAxis 次轴方向垂直于海峡
+
+马六甲海峡极窄（~20–40px），waypoint 间距 4px。当船卡住时，次轴方向（主方向的垂直轴）恰好指向马来半岛或苏门答腊，船完全动弹不了。`stagnantMoves` 持续累积至数百次，`useAlternateAxis` 无法提供帮助。
+
+修复：超远航线的 waypoint 到达半径从 32px 提升到 64px（`DEEP_ROUTE_REACHED_WAYPOINT_DISTANCE`）。4px 间距下 64px = 16 个 waypoint 的前视距离，海峡内的贴岸点会被自然跳过，不再进入卡死状态。
+
+### 根因二：微小振荡导致阈值无法触发
+
+好望角区域：`useAlternateAxis` 在 `stagnantMoves = 12` 时触发，次轴让船移动了一小步（≥ 0.001px），`stagnantMoves` 重置为 0，然后再次累积到 12，如此循环。计数器永远无法到达旧阈值 60，绕路逻辑永远不触发。
+
+修复：把超远航线的绕路触发阈值 `DEEP_ROUTE_STAGNANT_SKIP_THRESHOLD` 降到与 `STAGNANT_MOVES_BEFORE_ALTERNATE_AXIS` 相同（= 12），在第一次"卡 12 帧"时就尝试绕路。
+
+### 根因三：绕路目标基于 waypoint 数量而非物理距离，导致路径级联损毁
+
+早期绕路逻辑：`detourTargetIdx = waypointIndex + 60`。由于路径已被之前的绕路操作缩短（307 → 278 个 waypoint），在 Cape Town 卡住时 `265 + 60 = 325 > 277`，目标被 clamp 成最后一个 waypoint（Macao）。A* 从 Cape Town 到 Macao（数千像素）在 1000 节点内必然失败，触发 fallback skip 12 → `waypointIndex = 277` = 最终目标。整段非洲→印度洋路线全部丢失，船在好望角附近只剩 1 个 waypoint 指向 Macao，卡死在南非海岸。
+
+修复：目标选取改为**基于物理距离**（`DEEP_ROUTE_DETOUR_MIN_DISTANCE = 100px`），而非 waypoint 数量。沿路径向前走，找到第一个与当前位置距离 ≥ 100px 的 waypoint 作为绕路目标，且上限严格限定为 `path.length - 2`（绝不以最终目的地为目标）。fallback skip 从 12 降至 4，防止误跳到路径末尾。A* 节点预算从 1000 提升至 2000，确保 Cape Town 这类绕角场景能在预算内找到路径。
+
+### 绕路算法最终流程
+
+```
+卡住（stagnantMoves = 12，deep 策略）
+  ↓
+沿路径向前扫描，找首个物理距离 ≥ 100px 的 waypoint（上限 path.length-2）
+  ↓
+找到有效目标？
+  是 → findSeaPath(当前位置, 目标, 8px 格, 2000 节点)
+    → 成功：把绕路段插入路径替换堵死段，返回 newPath
+    → 失败：fallback skip 4 个 waypoint
+  否 → skip 4 个 waypoint
+stagnantMoves = 0, useAlternateAxis = false
+```
+
+`newPath` 由 `actionsWorld.ts` 的 `updateAutoNavigation` 应用到状态。普通策略（balanced/detailed/offshore）不受任何影响，Hormuz/Mombasa 回归测试全部通过。
 
 ## 测试建议
 
