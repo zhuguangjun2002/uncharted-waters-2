@@ -10,7 +10,9 @@ import WorldMap from './world/WorldMap';
 import AutoNavigationDebugOverlay from './world/AutoNavigationDebugOverlay';
 import Camera from './Camera';
 import updateInterface from '../state/updateInterface';
+import uiState from '../state/uiState';
 import Building from './port/Building';
+import SaveMenu from './common/SaveMenu';
 import { classNames } from './interfaceUtils';
 import useFade from './port/hooks/useFade';
 import type { Position } from '../types';
@@ -44,10 +46,44 @@ function Interface({ resolve }: Props) {
     position: { x: 0, y: 0 },
     autoNavigation: getDefaultAutoNavigation(),
   });
+  const [toast, setToast] = useState('');
+  // Open on boot so the player picks a save (or starts fresh) before playing.
+  const [saveMenuVisible, setSaveMenuVisible] = useState(true);
 
   useEffect(() => {
     resolve();
   }, []);
+
+  // F3 toggles the save/load menu. preventDefault stops the browser's default
+  // F3 ("find") behaviour.
+  useEffect(() => {
+    const onKeydown = (e: KeyboardEvent) => {
+      if (e.key.toLowerCase() === 'f3' && !e.repeat) {
+        e.preventDefault();
+        setSaveMenuVisible((visible) => !visible);
+      }
+    };
+
+    window.addEventListener('keydown', onKeydown);
+
+    return () => window.removeEventListener('keydown', onKeydown);
+  }, []);
+
+  // Let the game loop know to pause world/port updates while the menu is open.
+  useEffect(() => {
+    uiState.saveMenuOpen = saveMenuVisible;
+  }, [saveMenuVisible]);
+
+  // Auto-hide toast messages.
+  useEffect(() => {
+    if (!toast) {
+      return undefined;
+    }
+
+    const id = window.setTimeout(() => setToast(''), 1500);
+
+    return () => window.clearTimeout(id);
+  }, [toast]);
 
   updateInterface.general = (general) => {
     setPortId(general.portId);
@@ -57,6 +93,8 @@ function Interface({ resolve }: Props) {
   };
 
   updateInterface.worldMap = setWorldMap;
+
+  updateInterface.toast = setToast;
 
   const { fade, onAnimationEnd } = useFade();
 
@@ -96,6 +134,14 @@ function Interface({ resolve }: Props) {
               position={worldMap.position}
               autoNavigation={worldMap.autoNavigation}
             />
+          )}
+          {toast && (
+            <div className="absolute top-4 left-1/2 -translate-x-1/2 z-[60] px-4 py-2 bg-black/80 text-white text-lg whitespace-nowrap pointer-events-none">
+              {toast}
+            </div>
+          )}
+          {saveMenuVisible && (
+            <SaveMenu onClose={() => setSaveMenuVisible(false)} />
           )}
         </div>
         <Right>

@@ -56,6 +56,10 @@ const createWorldCharacters = (map: Map) => {
     update: () => {
       player.update();
 
+      // Keep the fleet's saved position in sync with the live world position
+      // so saving at sea captures where the player actually is.
+      playerFleet.position = player.position();
+
       if (Input.getPressedE() && dock(player.position())) {
         player.setHeading('');
         return;

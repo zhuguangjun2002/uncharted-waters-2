@@ -98,12 +98,6 @@ export interface State {
   autoNavigation: AutoNavigationState;
 }
 
-export const SAVED_STATE_KEY = 'savedState';
-
-const savedState = JSON.parse(
-  window.localStorage.getItem(SAVED_STATE_KEY) || '{}',
-);
-
 export const getDefaultAutoNavigation = (): AutoNavigationState => ({
   enabled: false,
   targetPortId: null,
@@ -159,7 +153,6 @@ const state = {
     },
   ] as Mate[],
   autoNavigation: getDefaultAutoNavigation(),
-  ...savedState,
-} as State;
+} as unknown as State;
 
 export default state;

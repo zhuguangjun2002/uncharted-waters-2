@@ -16,6 +16,7 @@ interface UpdateInterface {
     autoNavigation: AutoNavigationState;
   }) => void;
   fade: (onComplete: () => void) => void;
+  toast: (message: string) => void;
 }
 
 const updateInterface = {} as UpdateInterface;
