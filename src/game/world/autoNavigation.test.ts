@@ -12,6 +12,7 @@ import {
 import {
   createAutoNavigationPath,
   createAutoNavigationPaths,
+  findDeepRoutePath,
   findSeaPath,
   getAutoNavigationHeading,
   getDirectionToPosition,
@@ -557,4 +558,65 @@ describe('auto navigation simulation', () => {
       expect(result.status).toBe('arrived');
     },
   );
+
+  describe('narrow-channel ports (Lushun -> Changan)', () => {
+    // Changan (port 98) sits at the end of a 1-tile-wide channel. The coarse
+    // grids can't represent it, so only tile resolution finds the route.
+    // (Computed inside each test so the Assets.data mock from beforeEach is set.)
+    const lushunAndChangan = () => ({
+      start: positionAdjacentToPort('107'),
+      target: positionAdjacentToPort('98'),
+    });
+
+    test('coarse grids cannot reach it', () => {
+      const { start, target } = lushunAndChangan();
+
+      // useCoastPenalty: false keeps A* heuristic-guided so the open set stays
+      // small while it exhausts the (disconnected) coarse component.
+      expect(
+        findSeaPath({
+          start,
+          target,
+          isSea: isWorldSea,
+          gridSize: 8,
+          maxSearchedNodes: 200000,
+          useCoastPenalty: false,
+        }),
+      ).toEqual([]);
+      expect(
+        findSeaPath({
+          start,
+          target,
+          isSea: isWorldSea,
+          gridSize: 4,
+          maxSearchedNodes: 200000,
+          useCoastPenalty: false,
+        }),
+      ).toEqual([]);
+    });
+
+    test('tile resolution finds the channel', () => {
+      const { start, target } = lushunAndChangan();
+      const path = findSeaPath({
+        start,
+        target,
+        isSea: isWorldSea,
+        gridSize: 1,
+        maxSearchedNodes: 300000,
+        useCoastPenalty: false,
+      });
+
+      expect(path.length).toBeGreaterThan(0);
+      expect(path[path.length - 1]).toEqual(target);
+    });
+
+    test('deep route falls back to tile resolution and finds a path', async () => {
+      const { start, target } = lushunAndChangan();
+      const { promise } = findDeepRoutePath(start, target, () => {});
+      const path = await promise;
+
+      expect(path.length).toBeGreaterThan(0);
+      expect(path[path.length - 1]).toEqual(target);
+    }, 60000);
+  });
 });

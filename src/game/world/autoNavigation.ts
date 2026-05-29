@@ -16,6 +16,9 @@ const WORLD_MAP_ROWS = 1080;
 const DEFAULT_GRID_SIZE = 8;
 const FINE_GRID_SIZE = 4;
 const COARSE_GRID_SIZE = 12;
+// Tile-resolution fallback for ports reachable only through channels too narrow
+// for the coarser grids to represent (e.g. Changan).
+const TILE_GRID_SIZE = 1;
 const REACHED_WAYPOINT_DISTANCE = DEFAULT_GRID_SIZE * 4;
 const REACHED_TARGET_DISTANCE = 8;
 const DIRECTION_DEAD_ZONE = 1;
@@ -1021,19 +1024,34 @@ const getPreviewGridBudgetMultiplier = (gridSize: number) => {
 
 const DEEP_ROUTE_CHUNK_NODES = 3000;
 const DEEP_ROUTE_COAST_RADIUS = 3; // check 3 grid-cells out: penalty 3/2/1 — keeps bays expensive vs open-sea detour
+// Cap the tile-resolution fallback so an unreachable target fails gracefully
+// instead of exploring the entire ocean tile by tile.
+const DEEP_ROUTE_TILE_MAX_NODES = 300000;
 
 export interface DeepRouteHandle {
   promise: Promise<Position[]>;
   abort: () => void;
 }
 
-export const findDeepRoutePath = (
+interface ChunkedSeaSearch {
+  promise: Promise<Position[]>;
+  abort: () => void;
+}
+
+/*
+  Chunked A* over a sea grid of the given cell size, run in setTimeout slices so
+  the UI stays responsive. Resolves with a tile path, or [] if no path is found
+  within maxNodes. Extracted so the deep route can retry at finer resolutions.
+*/
+const createChunkedSeaSearch = (
   start: Position,
   target: Position,
+  gridSize: number,
   onProgress: (nodesSearched: number) => void,
-): DeepRouteHandle => {
+  maxNodes = Number.POSITIVE_INFINITY,
+  useCoastPenalty = true,
+): ChunkedSeaSearch => {
   let aborted = false;
-  const gridSize = FINE_GRID_SIZE;
   const columns = WORLD_MAP_COLUMNS;
   const rows = WORLD_MAP_ROWS;
   const gridColumns = getGridColumns(columns, gridSize);
@@ -1195,7 +1213,7 @@ export const findDeepRoutePath = (
                 ) {
                   const moveCost =
                     (xDelta !== 0 && yDelta !== 0 ? Math.SQRT2 : 1) +
-                    (neighborKey !== targetKey
+                    (useCoastPenalty && neighborKey !== targetKey
                       ? getDeepGridCoastPenalty(neighbor)
                       : 0);
                   const tentativeG =
@@ -1222,7 +1240,7 @@ export const findDeepRoutePath = (
         }
       }
 
-      if (openHeap.size === 0) {
+      if (openHeap.size === 0 || totalSearched >= maxNodes) {
         resolve([]);
         return;
       }
@@ -1238,6 +1256,82 @@ export const findDeepRoutePath = (
     promise,
     abort: () => {
       aborted = true;
+    },
+  };
+};
+
+/*
+  Deep route search: tries the fine 4x4 grid first, then falls back to a
+  tile-resolution search (capped) for ports reachable only through very narrow
+  channels. Progress is reported cumulatively across tiers.
+*/
+export const findDeepRoutePath = (
+  start: Position,
+  target: Position,
+  onProgress: (nodesSearched: number) => void,
+): DeepRouteHandle => {
+  let aborted = false;
+  let activeSearch: ChunkedSeaSearch | null = null;
+
+  const tiers: { gridSize: number; maxNodes: number; useCoastPenalty: boolean }[] =
+    [
+      {
+        gridSize: FINE_GRID_SIZE,
+        maxNodes: Number.POSITIVE_INFINITY,
+        useCoastPenalty: true,
+      },
+      // Tile resolution: coast penalty is meaningless in a 1-tile channel and
+      // its ring-scan would explode memory, so disable it.
+      {
+        gridSize: TILE_GRID_SIZE,
+        maxNodes: DEEP_ROUTE_TILE_MAX_NODES,
+        useCoastPenalty: false,
+      },
+    ];
+
+  const promise = (async () => {
+    let baseOffset = 0;
+
+    for (let i = 0; i < tiers.length; i += 1) {
+      if (aborted) {
+        return [];
+      }
+
+      const { gridSize, maxNodes, useCoastPenalty } = tiers[i];
+      const offset = baseOffset;
+      let lastReported = 0;
+
+      const search = createChunkedSeaSearch(
+        start,
+        target,
+        gridSize,
+        (nodes) => {
+          lastReported = nodes;
+          onProgress(offset + nodes);
+        },
+        maxNodes,
+        useCoastPenalty,
+      );
+      activeSearch = search;
+
+      // eslint-disable-next-line no-await-in-loop
+      const path = await search.promise;
+
+      if (path.length) {
+        return path;
+      }
+
+      baseOffset += lastReported;
+    }
+
+    return [];
+  })();
+
+  return {
+    promise,
+    abort: () => {
+      aborted = true;
+      activeSearch?.abort();
     },
   };
 };
