@@ -614,7 +614,7 @@ const getPreviewGridBudgetMultiplier = (gridSize: number) => {
 };
 
 const DEEP_ROUTE_CHUNK_NODES = 3000;
-const DEEP_ROUTE_COAST_RADIUS = FINE_GRID_SIZE; // 4px: nudge waypoints offshore without blocking straits
+const DEEP_ROUTE_COAST_RADIUS = 2; // check 2 grid-cells out: adjacent=penalty 2, one-step-out=penalty 1
 
 export interface DeepRouteHandle {
   promise: Promise<Position[]>;
@@ -680,19 +680,28 @@ export const findDeepRoutePath = (
       return cached;
     }
 
-    const center = gridToPosition(gp, columns, rows, gridSize);
+    // scan ring by ring (dist=1 first) so the nearest land determines penalty
+    for (let dist = 1; dist <= DEEP_ROUTE_COAST_RADIUS; dist += 1) {
+      for (let yOff = -dist; yOff <= dist; yOff += 1) {
+        for (let xOff = -dist; xOff <= dist; xOff += 1) {
+          const isRingPerimeter =
+            Math.abs(xOff) === dist || Math.abs(yOff) === dist;
 
-    for (let radius = 1; radius <= DEEP_ROUTE_COAST_RADIUS; radius += 1) {
-      for (let yOff = -radius; yOff <= radius; yOff += 1) {
-        for (let xOff = -radius; xOff <= radius; xOff += 1) {
-          const isPerimeter =
-            Math.abs(xOff) === radius || Math.abs(yOff) === radius;
+          if (!isRingPerimeter) {
+            continue;
+          }
+
+          const neighbor: GridPosition = {
+            x: (gp.x + xOff + gridColumns) % gridColumns,
+            y: gp.y + yOff,
+          };
 
           if (
-            isPerimeter &&
-            !isWorldSea({ x: center.x + xOff, y: center.y + yOff })
+            neighbor.y >= 0 &&
+            neighbor.y < gridRows &&
+            !isDeepGridSea(neighbor)
           ) {
-            const penalty = DEEP_ROUTE_COAST_RADIUS - radius + 1;
+            const penalty = DEEP_ROUTE_COAST_RADIUS - dist + 1;
             coastPenaltyCache.set(k, penalty);
             return penalty;
           }
