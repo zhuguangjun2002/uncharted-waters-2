@@ -15,6 +15,7 @@ import {
   findSeaPath,
   getAutoNavigationHeading,
   getDirectionToPosition,
+  isWorldSea,
 } from './autoNavigation';
 import type { AutoNavigationState } from '../../state/state';
 import { positionAdjacentToPort } from '../../state/selectors';
@@ -104,6 +105,7 @@ describe('getAutoNavigationHeading', () => {
     lastPosition: null,
     stagnantMoves: 0,
     useAlternateAxis: false,
+    debug: null,
   };
 
   test('advances past reached waypoints', () => {
@@ -191,10 +193,14 @@ describe('auto navigation simulation', () => {
     ].some((offset) => tileAt({ x: x + offset.x, y: y + offset.y }) >= 50);
   };
 
-  const move = (position: Position, direction: Direction) => {
+  const move = (
+    position: Position,
+    direction: Direction,
+    speed = testSpeed,
+  ) => {
     const { xDelta, yDelta } = directionToChanges[direction];
     const isDiagonal = Math.abs(xDelta) > 0 && Math.abs(yDelta) > 0;
-    const multiplier = testSpeed / (isDiagonal ? Math.SQRT2 : 1);
+    const multiplier = speed / (isDiagonal ? Math.SQRT2 : 1);
 
     if (!isDiagonal) {
       return calculateDestination(
@@ -230,6 +236,42 @@ describe('auto navigation simulation', () => {
     return Math.sqrt(x * x + y * y);
   };
 
+  test('deep routes keep a tight waypoint radius near the Cape Town coast', () => {
+    const autoNavigation: AutoNavigationState = {
+      enabled: true,
+      targetPortId: '96',
+      targetPosition: { x: 1582, y: 472 },
+      strategyId: 'deep',
+      path: [
+        { x: 993, y: 852 },
+        { x: 996, y: 860 },
+        { x: 1004, y: 868 },
+        { x: 1012, y: 868 },
+        { x: 1070, y: 860 },
+      ],
+      waypointIndex: 0,
+      lastPosition: null,
+      stagnantMoves: 0,
+      useAlternateAxis: false,
+      debug: null,
+    };
+
+    const result = getAutoNavigationHeading(
+      { x: 1001, y: 840 },
+      autoNavigation,
+    );
+
+    expect(result).toMatchObject({
+      heading: 's',
+      waypointIndex: 0,
+      debug: {
+        reachedDistance: 4,
+        positionOpenSea: false,
+        waypoint: { x: 993, y: 852 },
+      },
+    });
+  });
+
   test('Lisbon to Hormuz does not get stuck', () => {
     let position = { x: 838, y: 358 };
     const targetPosition = { x: 1240, y: 448 };
@@ -243,6 +285,7 @@ describe('auto navigation simulation', () => {
       lastPosition: null,
       stagnantMoves: 0,
       useAlternateAxis: false,
+      debug: null,
     };
     let stagnantMoves = 0;
 
@@ -256,12 +299,18 @@ describe('auto navigation simulation', () => {
         lastPosition,
         stagnantMoves: autoNavigationStagnantMoves,
         useAlternateAxis,
+        newPath,
+        debug,
       } = getAutoNavigationHeading(position, autoNavigation);
 
       autoNavigation.waypointIndex = waypointIndex;
       autoNavigation.lastPosition = lastPosition;
       autoNavigation.stagnantMoves = autoNavigationStagnantMoves;
       autoNavigation.useAlternateAxis = useAlternateAxis;
+      autoNavigation.debug = debug;
+      if (newPath) {
+        autoNavigation.path = newPath;
+      }
 
       if (arrived) {
         expect(distance(position, targetPosition)).toBeLessThan(12);
@@ -337,9 +386,10 @@ describe('auto navigation simulation', () => {
     start: Position,
     targetPosition: Position,
     path: Position[],
-    strategyId: 'balanced' | 'detailed' | 'offshore',
+    strategyId: AutoNavigationState['strategyId'],
     maxSteps = 40000,
     stagnantLimit = 30,
+    speed = testSpeed,
   ) => {
     let position = start;
     const autoNavigation: AutoNavigationState = {
@@ -352,6 +402,7 @@ describe('auto navigation simulation', () => {
       lastPosition: null,
       stagnantMoves: 0,
       useAlternateAxis: false,
+      debug: null,
     };
     let stagnantMoves = 0;
 
@@ -363,12 +414,18 @@ describe('auto navigation simulation', () => {
         lastPosition,
         stagnantMoves: autoNavigationStagnantMoves,
         useAlternateAxis,
+        newPath,
+        debug,
       } = getAutoNavigationHeading(position, autoNavigation);
 
       autoNavigation.waypointIndex = waypointIndex;
       autoNavigation.lastPosition = lastPosition;
       autoNavigation.stagnantMoves = autoNavigationStagnantMoves;
       autoNavigation.useAlternateAxis = useAlternateAxis;
+      autoNavigation.debug = debug;
+      if (newPath) {
+        autoNavigation.path = newPath;
+      }
 
       if (arrived) {
         return { status: 'arrived' as const, position, steps: i };
@@ -378,7 +435,7 @@ describe('auto navigation simulation', () => {
         return { status: 'no-heading' as const, position, steps: i };
       }
 
-      const destination = move(position, heading);
+      const destination = move(position, heading, speed);
       const nextPosition = {
         x: getXWrapAround(destination.x),
         y: destination.y,
@@ -397,6 +454,8 @@ describe('auto navigation simulation', () => {
           steps: i,
           waypoint: autoNavigation.path[waypointIndex],
           waypointIndex,
+          debug: autoNavigation.debug,
+          autoNavigationStagnantMoves: autoNavigation.stagnantMoves,
         };
       }
 
@@ -405,6 +464,67 @@ describe('auto navigation simulation', () => {
 
     return { status: 'timeout' as const, position, steps: maxSteps };
   };
+
+  test('deep detour around the Malaysia island does not skip into the coast', () => {
+    const start = { x: 1498, y: 586 };
+    const targetPosition = { x: 1572, y: 516 };
+    const path = findSeaPath({
+      start,
+      target: targetPosition,
+      isSea: isWorldSea,
+      gridSize: 4,
+      maxSearchedNodes: 5000,
+      useCoastPenalty: false,
+      useSegmentClearance: true,
+    });
+
+    expect(path.length).toBeGreaterThan(0);
+
+    const firstHeading = getAutoNavigationHeading(start, {
+      enabled: true,
+      targetPortId: '96',
+      targetPosition,
+      strategyId: 'deep',
+      path,
+      waypointIndex: 0,
+      lastPosition: null,
+      stagnantMoves: 0,
+      useAlternateAxis: false,
+      debug: null,
+    });
+
+    expect(firstHeading).toMatchObject({
+      waypointIndex: 1,
+      heading: 'w',
+      debug: {
+        waypoint: { x: 1490, y: 582 },
+      },
+    });
+
+    const result = simulateAutoNavigation(
+      start,
+      targetPosition,
+      path,
+      'deep',
+      20000,
+      30,
+      2,
+    );
+
+    if (result.status === 'stuck') {
+      throw Error(
+        `Auto navigation stuck at step ${
+          result.steps
+        }, position ${JSON.stringify(result.position)}, waypoint #${
+          result.waypointIndex
+        } ${JSON.stringify(result.waypoint)}, debug ${JSON.stringify(
+          result.debug,
+        )}, nav stagnant ${JSON.stringify(result.autoNavigationStagnantMoves)}`,
+      );
+    }
+
+    expect(result.status).toBe('arrived');
+  });
 
   test.each(['balanced', 'offshore'] as const)(
     'Lisbon to Mombasa with %s actual-nav path does not get stuck',
@@ -428,7 +548,9 @@ describe('auto navigation simulation', () => {
             result.steps
           }, position ${JSON.stringify(result.position)}, waypoint #${
             result.waypointIndex
-          } ${JSON.stringify(result.waypoint)}`,
+          } ${JSON.stringify(result.waypoint)}, debug ${JSON.stringify(
+            result.debug,
+          )}`,
         );
       }
 

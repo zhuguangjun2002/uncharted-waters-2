@@ -1,18 +1,22 @@
 import Assets from '../../assets';
 import { WORLD_MAP_COLUMNS } from '../../constants';
-import type { AutoNavigationState } from '../../state/state';
-import type { Direction, Position } from '../../types';
+import type {
+  AutoNavigationDebug,
+  AutoNavigationDebugReason,
+  AutoNavigationState,
+} from '../../state/state';
+import { directionToChanges, type Direction, type Position } from '../../types';
 import {
   getFromToAccountingForWrapAround,
   getXWrapAround,
 } from './sharedUtils';
+import { calculateDestination } from './worldUtils';
 
 const WORLD_MAP_ROWS = 1080;
 const DEFAULT_GRID_SIZE = 8;
 const FINE_GRID_SIZE = 4;
 const COARSE_GRID_SIZE = 12;
 const REACHED_WAYPOINT_DISTANCE = DEFAULT_GRID_SIZE * 4;
-const DEEP_ROUTE_REACHED_WAYPOINT_DISTANCE = DEFAULT_GRID_SIZE * 8;
 const REACHED_TARGET_DISTANCE = 8;
 const DIRECTION_DEAD_ZONE = 1;
 const COAST_PENALTY_RADIUS = 16;
@@ -23,7 +27,10 @@ const DEEP_ROUTE_STAGNANT_SKIP_THRESHOLD = STAGNANT_MOVES_BEFORE_ALTERNATE_AXIS;
 const DEEP_ROUTE_STAGNANT_SKIP_COUNT = 4;
 const DEEP_ROUTE_DETOUR_MIN_DISTANCE = 100;
 const DEEP_ROUTE_DETOUR_MAX_SEARCH = 200;
-const DEEP_ROUTE_DETOUR_MAX_NODES = 2000;
+const DEEP_ROUTE_DETOUR_MAX_NODES = 5000;
+const DEEP_ROUTE_OPEN_SEA_REACHED_WAYPOINT_DISTANCE = DEFAULT_GRID_SIZE * 8;
+const DEEP_ROUTE_COASTAL_REACHED_WAYPOINT_DISTANCE = FINE_GRID_SIZE * 3;
+const DEEP_ROUTE_HAZARDOUS_COAST_REACHED_WAYPOINT_DISTANCE = FINE_GRID_SIZE;
 const PREVIEW_SEARCHED_GRID_NODES = 400;
 
 interface GridPosition {
@@ -40,9 +47,14 @@ interface PathOptions {
   gridSize?: number;
   maxSearchedNodes?: number;
   useCoastPenalty?: boolean;
+  useSegmentClearance?: boolean;
 }
 
-export type AutoNavigationStrategyId = 'balanced' | 'detailed' | 'offshore' | 'deep';
+export type AutoNavigationStrategyId =
+  | 'balanced'
+  | 'detailed'
+  | 'offshore'
+  | 'deep';
 
 interface AutoNavigationStrategy {
   id: AutoNavigationStrategyId;
@@ -324,6 +336,7 @@ export const findSeaPath = ({
   gridSize = DEFAULT_GRID_SIZE,
   maxSearchedNodes = Number.POSITIVE_INFINITY,
   useCoastPenalty = true,
+  useSegmentClearance = false,
 }: PathOptions) => {
   const gridColumns = getGridColumns(columns, gridSize);
   const gridRows = getGridRows(rows, gridSize);
@@ -352,6 +365,7 @@ export const findSeaPath = ({
   const closedSet = new Set<string>();
   const seaCache = new Map<string, boolean>();
   const coastPenaltyCache = new Map<string, number>();
+  const segmentSeaCache = new Map<string, boolean>();
   let searchedNodes = 0;
 
   const isGridSea = (gridPosition: GridPosition) => {
@@ -385,6 +399,50 @@ export const findSeaPath = ({
     return penalty;
   };
 
+  const isGridInBounds = (gridPosition: GridPosition) =>
+    gridPosition.y >= 0 && gridPosition.y < gridRows;
+
+  const isAllowedSeaGrid = (gridPosition: GridPosition) => {
+    const key = gridKey(gridPosition);
+
+    return key === targetKey || key === startKey || isGridSea(gridPosition);
+  };
+
+  const isGridSegmentSea = (from: GridPosition, to: GridPosition) => {
+    const key = `${gridKey(from)}>${gridKey(to)}`;
+    const cached = segmentSeaCache.get(key);
+
+    if (cached !== undefined) {
+      return cached;
+    }
+
+    const fromPosition = gridToPosition(from, columns, rows, gridSize);
+    const toPosition = gridToPosition(to, columns, rows, gridSize);
+    const xDelta = getFromToAccountingForWrapAround(
+      fromPosition.x,
+      toPosition.x,
+    );
+    const yDelta = toPosition.y - fromPosition.y;
+    const steps = Math.max(Math.abs(xDelta), Math.abs(yDelta), 1);
+
+    for (let step = 1; step <= steps; step += 1) {
+      const t = step / steps;
+
+      if (
+        !isSea({
+          x: getXWrapAround(fromPosition.x + xDelta * t),
+          y: fromPosition.y + yDelta * t,
+        })
+      ) {
+        segmentSeaCache.set(key, false);
+        return false;
+      }
+    }
+
+    segmentSeaCache.set(key, true);
+    return true;
+  };
+
   while (openHeap.size && searchedNodes < maxSearchedNodes) {
     const { position: current, key: currentKey } = openHeap.pop();
 
@@ -416,17 +474,33 @@ export const findSeaPath = ({
             y: current.y + yDelta,
           };
           const neighborKey = gridKey(neighbor);
-          const isAllowedSeaNode =
-            neighborKey === targetKey ||
-            neighborKey === startKey ||
-            isGridSea(neighbor);
-          const isInBounds = neighbor.y >= 0 && neighbor.y < gridRows;
+          const isDiagonalMove = xDelta !== 0 && yDelta !== 0;
+          const horizontalNeighbor = {
+            x: (current.x + xDelta + gridColumns) % gridColumns,
+            y: current.y,
+          };
+          const verticalNeighbor = {
+            x: current.x,
+            y: current.y + yDelta,
+          };
+          const hasDiagonalClearance =
+            !isDiagonalMove ||
+            (isGridInBounds(horizontalNeighbor) &&
+              isGridInBounds(verticalNeighbor) &&
+              isAllowedSeaGrid(horizontalNeighbor) &&
+              isAllowedSeaGrid(verticalNeighbor));
+          const isAllowedSeaNode = isAllowedSeaGrid(neighbor);
+          const isInBounds = isGridInBounds(neighbor);
+          const hasSegmentClearance =
+            !useSegmentClearance || isGridSegmentSea(current, neighbor);
 
           if (
             shouldCheckNeighbor &&
             !closedSet.has(neighborKey) &&
             isInBounds &&
-            isAllowedSeaNode
+            isAllowedSeaNode &&
+            hasDiagonalClearance &&
+            hasSegmentClearance
           ) {
             const tentativeGScore =
               (gScore.get(currentKey) ?? Infinity) +
@@ -463,12 +537,67 @@ const getDistance = (from: Position, to: Position) => {
   return Math.sqrt(dx * dx + dy * dy);
 };
 
+const isOpenSeaForWaypointReach = (position: Position) =>
+  getCoastPenalty(position, isWorldSea) === 0;
+
+const isHazardousCoastForWaypointReach = (position: Position) =>
+  getCoastPenalty(position, isWorldSea) >= 8;
+
+const canMoveInDirection = (position: Position, direction: Direction | '') => {
+  if (!direction) {
+    return false;
+  }
+
+  const { xDelta, yDelta } = directionToChanges[direction];
+  const collisionAt = (nextPosition: Position) => !isWorldSea(nextPosition);
+  const isDiagonal = Math.abs(xDelta) > 0 && Math.abs(yDelta) > 0;
+  const multiplier = 1 / (isDiagonal ? Math.SQRT2 : 1);
+  const destination = !isDiagonal
+    ? calculateDestination(position, xDelta, yDelta, multiplier, collisionAt)
+    : calculateDestination(
+        calculateDestination(position, xDelta, 0, multiplier, collisionAt),
+        0,
+        yDelta,
+        multiplier,
+        collisionAt,
+      );
+
+  return (
+    getDistance(position, {
+      x: getXWrapAround(destination.x),
+      y: destination.y,
+    }) >= STAGNANT_MOVE_DISTANCE
+  );
+};
+
 const getReachedDistance = (
+  position: Position,
   waypointIndex: number,
   autoNavigation: AutoNavigationState,
 ) => {
-  if (waypointIndex === autoNavigation.path.length - 1) return REACHED_TARGET_DISTANCE;
-  if (autoNavigation.strategyId === 'deep') return DEEP_ROUTE_REACHED_WAYPOINT_DISTANCE;
+  if (waypointIndex === autoNavigation.path.length - 1)
+    return REACHED_TARGET_DISTANCE;
+  if (autoNavigation.strategyId === 'deep') {
+    const waypoint = autoNavigation.path[waypointIndex];
+
+    if (
+      waypoint &&
+      (isHazardousCoastForWaypointReach(position) ||
+        isHazardousCoastForWaypointReach(waypoint))
+    ) {
+      return DEEP_ROUTE_HAZARDOUS_COAST_REACHED_WAYPOINT_DISTANCE;
+    }
+
+    if (
+      waypoint &&
+      isOpenSeaForWaypointReach(position) &&
+      isOpenSeaForWaypointReach(waypoint)
+    ) {
+      return DEEP_ROUTE_OPEN_SEA_REACHED_WAYPOINT_DISTANCE;
+    }
+
+    return DEEP_ROUTE_COASTAL_REACHED_WAYPOINT_DISTANCE;
+  }
   return REACHED_WAYPOINT_DISTANCE;
 };
 
@@ -525,6 +654,101 @@ const isOpenSeaForDiagonalHeading = (position: Position) => {
   return true;
 };
 
+interface AutoNavigationDebugOptions {
+  reason: AutoNavigationDebugReason;
+  message: string;
+  detourTarget?: Position | null;
+  detourTargetIndex?: number | null;
+  detourTargetDistance?: number | null;
+  detourPathLength?: number | null;
+}
+
+const createAutoNavigationDebug = (
+  position: Position,
+  autoNavigation: AutoNavigationState,
+  waypointIndex: number,
+  heading: Direction | '',
+  {
+    reason,
+    message,
+    detourTarget = null,
+    detourTargetIndex = null,
+    detourTargetDistance = null,
+    detourPathLength = null,
+  }: AutoNavigationDebugOptions,
+): AutoNavigationDebug => {
+  const waypoint = autoNavigation.path[waypointIndex] || null;
+  const shouldInspectOpenSea = autoNavigation.strategyId === 'deep';
+
+  return {
+    position,
+    heading,
+    waypoint,
+    waypointIndex,
+    waypointCount: autoNavigation.path.length,
+    distanceToWaypoint: waypoint ? getDistance(position, waypoint) : null,
+    reachedDistance: waypoint
+      ? getReachedDistance(position, waypointIndex, autoNavigation)
+      : null,
+    positionSea: isWorldSea(position),
+    waypointSea: waypoint ? isWorldSea(waypoint) : null,
+    positionOpenSea: shouldInspectOpenSea
+      ? isOpenSeaForWaypointReach(position)
+      : null,
+    waypointOpenSea:
+      shouldInspectOpenSea && waypoint
+        ? isOpenSeaForWaypointReach(waypoint)
+        : null,
+    reason,
+    message,
+    detourTarget,
+    detourTargetIndex,
+    detourTargetDistance,
+    detourPathLength,
+  };
+};
+
+const getCoastalSafeHeading = (
+  position: Position,
+  waypoint: Position,
+  preferredHeading: Direction | '',
+  useAlternateAxis: boolean,
+) => {
+  if (
+    !preferredHeading ||
+    isOpenSeaForWaypointReach(position) ||
+    canMoveInDirection(position, preferredHeading)
+  ) {
+    return {
+      heading: preferredHeading,
+      switchedAxis: false,
+    };
+  }
+
+  const alternateHeading = getDirectionToPosition(
+    position,
+    waypoint,
+    !useAlternateAxis,
+    false,
+  );
+
+  if (
+    alternateHeading &&
+    alternateHeading !== preferredHeading &&
+    canMoveInDirection(position, alternateHeading)
+  ) {
+    return {
+      heading: alternateHeading,
+      switchedAxis: true,
+    };
+  }
+
+  return {
+    heading: preferredHeading,
+    switchedAxis: false,
+  };
+};
+
 export const getAutoNavigationHeading = (
   position: Position,
   autoNavigation: AutoNavigationState,
@@ -532,6 +756,12 @@ export const getAutoNavigationHeading = (
   let { waypointIndex } = autoNavigation;
   let stagnantMoves = autoNavigation.stagnantMoves || 0;
   let useAlternateAxis = autoNavigation.useAlternateAxis || false;
+  let debugReason: AutoNavigationDebugReason = 'tracking';
+  let debugMessage = '正在追踪当前导航点。';
+  let detourTarget: Position | null = null;
+  let detourTargetIndex: number | null = null;
+  let detourTargetDistance: number | null = null;
+  const detourPathLength: number | null = null;
 
   if (
     autoNavigation.lastPosition &&
@@ -545,6 +775,8 @@ export const getAutoNavigationHeading = (
 
   if (stagnantMoves >= STAGNANT_MOVES_BEFORE_ALTERNATE_AXIS) {
     useAlternateAxis = true;
+    debugReason = 'stagnant-alternate-axis';
+    debugMessage = '连续停滞，正在改用单轴航向尝试脱离岸线碰撞。';
   }
 
   // Deep-route waypoints are only 4 px apart; when stuck, find a waypoint
@@ -570,6 +802,11 @@ export const getAutoNavigationHeading = (
       detourTargetIdx += 1;
     }
 
+    detourTarget = autoNavigation.path[detourTargetIdx] || null;
+    detourTargetIndex = detourTargetIdx;
+    detourTargetDistance = detourTarget
+      ? getDistance(position, detourTarget)
+      : null;
     stagnantMoves = 0;
     useAlternateAxis = false;
 
@@ -583,8 +820,10 @@ export const getAutoNavigationHeading = (
         start: position,
         target: autoNavigation.path[detourTargetIdx],
         isSea: isWorldSea,
-        gridSize: DEFAULT_GRID_SIZE,
+        gridSize: FINE_GRID_SIZE,
         maxSearchedNodes: DEEP_ROUTE_DETOUR_MAX_NODES,
+        useCoastPenalty: false,
+        useSegmentClearance: true,
       });
 
       if (detourSegment.length > 0) {
@@ -593,21 +832,57 @@ export const getAutoNavigationHeading = (
           ...detourSegment,
           ...autoNavigation.path.slice(detourTargetIdx),
         ];
+        const preferredHeading = getDirectionToPosition(
+          position,
+          detourSegment[0],
+          false,
+          isOpenSeaForDiagonalHeading(position),
+        );
+        const { heading, switchedAxis } = getCoastalSafeHeading(
+          position,
+          detourSegment[0],
+          preferredHeading,
+          false,
+        );
+        const detourAutoNavigation = {
+          ...autoNavigation,
+          path: newPath,
+        };
+
         return {
-          heading: getDirectionToPosition(
-            position,
-            detourSegment[0],
-            false,
-            isOpenSeaForDiagonalHeading(position),
-          ),
+          heading,
           waypointIndex,
           arrived: false,
           lastPosition: position,
           stagnantMoves: 0,
           useAlternateAxis: false,
           newPath,
+          debug: createAutoNavigationDebug(
+            position,
+            detourAutoNavigation,
+            waypointIndex,
+            heading,
+            {
+              reason: switchedAxis
+                ? 'coastal-axis-switch'
+                : 'deep-detour-created',
+              message: switchedAxis
+                ? '局部 A* 已插入绕行航段；当前主轴被岸线挡住，先沿另一轴脱离。'
+                : '连续停滞，已用局部 A* 插入绕行航段。',
+              detourTarget,
+              detourTargetIndex,
+              detourTargetDistance,
+              detourPathLength: detourSegment.length,
+            },
+          ),
         };
       }
+
+      debugReason = 'deep-detour-failed';
+      debugMessage = '局部 A* 没有找到绕行段，已跳过少量前方航点。';
+    } else {
+      debugReason = 'deep-detour-target-too-close';
+      debugMessage = '前方没有足够远的局部绕行目标，已跳过少量前方航点。';
     }
 
     // detour skipped or A* exhausted budget — nudge ahead a few waypoints
@@ -620,36 +895,90 @@ export const getAutoNavigationHeading = (
   while (
     waypointIndex < autoNavigation.path.length &&
     getDistance(position, autoNavigation.path[waypointIndex]) <=
-      getReachedDistance(waypointIndex, autoNavigation)
+      getReachedDistance(position, waypointIndex, autoNavigation)
   ) {
     waypointIndex += 1;
     stagnantMoves = 0;
     useAlternateAxis = false;
+
+    if (debugReason === 'stagnant-alternate-axis') {
+      debugReason = 'tracking';
+      debugMessage = '已通过近处导航点，正在追踪后续导航点。';
+    }
   }
 
   if (waypointIndex >= autoNavigation.path.length) {
+    const heading = '' as Direction | '';
+
     return {
-      heading: '' as Direction | '',
+      heading,
       waypointIndex,
       arrived: true,
       lastPosition: position,
       stagnantMoves,
       useAlternateAxis,
+      debug: createAutoNavigationDebug(
+        position,
+        autoNavigation,
+        waypointIndex,
+        heading,
+        {
+          reason: 'arrived',
+          message: '已到达目标港邻近海域。',
+          detourTarget,
+          detourTargetIndex,
+          detourTargetDistance,
+          detourPathLength,
+        },
+      ),
     };
   }
 
+  const preferredHeading = getDirectionToPosition(
+    position,
+    autoNavigation.path[waypointIndex],
+    useAlternateAxis,
+    !useAlternateAxis && isOpenSeaForDiagonalHeading(position),
+  );
+  const { heading, switchedAxis } =
+    autoNavigation.strategyId === 'deep'
+      ? getCoastalSafeHeading(
+          position,
+          autoNavigation.path[waypointIndex],
+          preferredHeading,
+          useAlternateAxis,
+        )
+      : {
+          heading: preferredHeading,
+          switchedAxis: false,
+        };
+
+  if (switchedAxis) {
+    debugReason = 'coastal-axis-switch';
+    debugMessage = '当前主轴被岸线挡住，先沿另一轴贴边绕行。';
+  }
+
   return {
-    heading: getDirectionToPosition(
-      position,
-      autoNavigation.path[waypointIndex],
-      useAlternateAxis,
-      !useAlternateAxis && isOpenSeaForDiagonalHeading(position),
-    ),
+    heading,
     waypointIndex,
     arrived: false,
     lastPosition: position,
     stagnantMoves,
     useAlternateAxis,
+    debug: createAutoNavigationDebug(
+      position,
+      autoNavigation,
+      waypointIndex,
+      heading,
+      {
+        reason: debugReason,
+        message: debugMessage,
+        detourTarget,
+        detourTargetIndex,
+        detourTargetDistance,
+        detourPathLength,
+      },
+    ),
   };
 };
 
@@ -764,23 +1093,21 @@ export const findDeepRoutePath = (
           const isRingPerimeter =
             Math.abs(xOff) === dist || Math.abs(yOff) === dist;
 
-          if (!isRingPerimeter) {
-            continue;
-          }
+          if (isRingPerimeter) {
+            const neighbor: GridPosition = {
+              x: (gp.x + xOff + gridColumns) % gridColumns,
+              y: gp.y + yOff,
+            };
 
-          const neighbor: GridPosition = {
-            x: (gp.x + xOff + gridColumns) % gridColumns,
-            y: gp.y + yOff,
-          };
-
-          if (
-            neighbor.y >= 0 &&
-            neighbor.y < gridRows &&
-            !isDeepGridSea(neighbor)
-          ) {
-            const penalty = DEEP_ROUTE_COAST_RADIUS - dist + 1;
-            coastPenaltyCache.set(k, penalty);
-            return penalty;
+            if (
+              neighbor.y >= 0 &&
+              neighbor.y < gridRows &&
+              !isDeepGridSea(neighbor)
+            ) {
+              const penalty = DEEP_ROUTE_COAST_RADIUS - dist + 1;
+              coastPenaltyCache.set(k, penalty);
+              return penalty;
+            }
           }
         }
       }
@@ -788,6 +1115,14 @@ export const findDeepRoutePath = (
 
     coastPenaltyCache.set(k, 0);
     return 0;
+  };
+
+  const isDeepGridInBounds = (gp: GridPosition) => gp.y >= 0 && gp.y < gridRows;
+
+  const isAllowedDeepSeaGrid = (gp: GridPosition) => {
+    const k = gridKey(gp);
+
+    return k === targetKey || k === startKey || isDeepGridSea(gp);
   };
 
   const promise = new Promise<Position[]>((resolve) => {
@@ -802,69 +1137,85 @@ export const findDeepRoutePath = (
       while (openHeap.size > 0 && chunkNodes < DEEP_ROUTE_CHUNK_NODES) {
         const { position: current, key: currentKey } = openHeap.pop();
 
-        if (closedSet.has(currentKey)) {
-          continue;
-        }
+        if (!closedSet.has(currentKey)) {
+          chunkNodes += 1;
+          totalSearched += 1;
+          closedSet.add(currentKey);
 
-        chunkNodes += 1;
-        totalSearched += 1;
-        closedSet.add(currentKey);
+          if (currentKey === targetKey) {
+            const gridPath = reconstructPath(cameFrom, currentKey, positions);
 
-        if (currentKey === targetKey) {
-          const gridPath = reconstructPath(cameFrom, currentKey, positions);
+            if (!gridPath.length) {
+              resolve([]);
+              return;
+            }
 
-          if (!gridPath.length) {
-            resolve([]);
+            resolve(
+              gridPath
+                .slice(1)
+                .map((gp) => gridToPosition(gp, columns, rows, gridSize))
+                .concat(target),
+            );
             return;
           }
 
-          resolve(
-            gridPath
-              .slice(1)
-              .map((gp) => gridToPosition(gp, columns, rows, gridSize))
-              .concat(target),
-          );
-          return;
-        }
+          for (let yDelta = -1; yDelta <= 1; yDelta += 1) {
+            for (let xDelta = -1; xDelta <= 1; xDelta += 1) {
+              const shouldCheckNeighbor = xDelta !== 0 || yDelta !== 0;
 
-        for (let yDelta = -1; yDelta <= 1; yDelta += 1) {
-          for (let xDelta = -1; xDelta <= 1; xDelta += 1) {
-            if (xDelta === 0 && yDelta === 0) {
-              continue;
-            }
+              if (shouldCheckNeighbor) {
+                const neighbor: GridPosition = {
+                  x: (current.x + xDelta + gridColumns) % gridColumns,
+                  y: current.y + yDelta,
+                };
+                const neighborKey = gridKey(neighbor);
+                const isDiagonalMove = xDelta !== 0 && yDelta !== 0;
+                const horizontalNeighbor: GridPosition = {
+                  x: (current.x + xDelta + gridColumns) % gridColumns,
+                  y: current.y,
+                };
+                const verticalNeighbor: GridPosition = {
+                  x: current.x,
+                  y: current.y + yDelta,
+                };
+                const hasDiagonalClearance =
+                  !isDiagonalMove ||
+                  (isDeepGridInBounds(horizontalNeighbor) &&
+                    isDeepGridInBounds(verticalNeighbor) &&
+                    isAllowedDeepSeaGrid(horizontalNeighbor) &&
+                    isAllowedDeepSeaGrid(verticalNeighbor));
+                const isInBounds = isDeepGridInBounds(neighbor);
+                const isAllowedSea = isAllowedDeepSeaGrid(neighbor);
 
-            const neighbor: GridPosition = {
-              x: (current.x + xDelta + gridColumns) % gridColumns,
-              y: current.y + yDelta,
-            };
-            const neighborKey = gridKey(neighbor);
-            const isInBounds = neighbor.y >= 0 && neighbor.y < gridRows;
-            const isAllowedSea =
-              neighborKey === targetKey ||
-              neighborKey === startKey ||
-              isDeepGridSea(neighbor);
+                if (
+                  !closedSet.has(neighborKey) &&
+                  isInBounds &&
+                  isAllowedSea &&
+                  hasDiagonalClearance
+                ) {
+                  const moveCost =
+                    (xDelta !== 0 && yDelta !== 0 ? Math.SQRT2 : 1) +
+                    (neighborKey !== targetKey
+                      ? getDeepGridCoastPenalty(neighbor)
+                      : 0);
+                  const tentativeG =
+                    (gScore.get(currentKey) ?? Infinity) + moveCost;
 
-            if (!closedSet.has(neighborKey) && isInBounds && isAllowedSea) {
-              const moveCost =
-                (xDelta !== 0 && yDelta !== 0 ? Math.SQRT2 : 1) +
-                (neighborKey !== targetKey
-                  ? getDeepGridCoastPenalty(neighbor)
-                  : 0);
-              const tentativeG =
-                (gScore.get(currentKey) ?? Infinity) + moveCost;
-
-              if (tentativeG < (gScore.get(neighborKey) ?? Infinity)) {
-                cameFrom.set(neighborKey, currentKey);
-                positions.set(neighborKey, neighbor);
-                gScore.set(neighborKey, tentativeG);
-                openHeap.push({
-                  position: neighbor,
-                  key: neighborKey,
-                  fScore:
-                    tentativeG + getHeuristic(neighbor, targetGrid, gridColumns),
-                  sequence: heapSequence,
-                });
-                heapSequence += 1;
+                  if (tentativeG < (gScore.get(neighborKey) ?? Infinity)) {
+                    cameFrom.set(neighborKey, currentKey);
+                    positions.set(neighborKey, neighbor);
+                    gScore.set(neighborKey, tentativeG);
+                    openHeap.push({
+                      position: neighbor,
+                      key: neighborKey,
+                      fScore:
+                        tentativeG +
+                        getHeuristic(neighbor, targetGrid, gridColumns),
+                      sequence: heapSequence,
+                    });
+                    heapSequence += 1;
+                  }
+                }
               }
             }
           }

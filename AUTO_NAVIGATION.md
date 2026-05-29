@@ -32,6 +32,7 @@
 - [src/state/actionsWorld.ts](/home/laozhu/project/uncharted-waters-2/src/state/actionsWorld.ts)：启动、取消、更新自动导航。
 - [src/state/state.ts](/home/laozhu/project/uncharted-waters-2/src/state/state.ts)：`autoNavigation` 状态。
 - [src/interface/world/WorldMap.tsx](/home/laozhu/project/uncharted-waters-2/src/interface/world/WorldMap.tsx)：F4 世界地图中的目标港选择、开始/取消按钮、路径显示和状态反馈。
+- [src/interface/world/AutoNavigationDebugOverlay.tsx](/home/laozhu/project/uncharted-waters-2/src/interface/world/AutoNavigationDebugOverlay.tsx)：海上航行画面的自动导航诊断浮层，用于显示当前 waypoint、距离、航向、A\* 目标和卡住原因。
 - [src/data/portData.ts](/home/laozhu/project/uncharted-waters-2/src/data/portData.ts)：目标港坐标来源。
 
 ## 自动导航状态
@@ -49,6 +50,7 @@ autoNavigation: {
   lastPosition: Position | null;
   stagnantMoves: number;
   useAlternateAxis: boolean;
+  debug: AutoNavigationDebug | null;
 }
 ```
 
@@ -63,6 +65,7 @@ autoNavigation: {
 - `lastPosition`：上一轮自动导航检查时的船队位置。
 - `stagnantMoves`：连续几次位置几乎没有变化。
 - `useAlternateAxis`：卡住时是否临时改用另一轴向航行。
+- `debug`：当前自动导航诊断快照。F4 世界地图和海上诊断浮层都会读取它，显示当前追踪的 waypoint、距离、判定半径、航向、海况、局部 A\* 目标和失败/切轴原因。
 
 ## A\* 是什么？
 
@@ -213,6 +216,8 @@ F4 地图显示规则：
 - 三种策略预览会共享相同网格精度的计算结果，避免 `8 x 8`、`4 x 4` 在同一次预览中重复计算。
 - F4 预览使用轻量寻路，不计算昂贵的海岸惩罚，只用于比较路线和确认大致连通性；实际启动自动导航时仍会使用完整路径和航行逻辑。
 - 自动导航运行中会显示完成百分比、已通过导航点数、剩余导航点数、连续停滞次数和当前坐标。
+- 自动导航运行中还会显示诊断信息：当前 waypoint 坐标、距离、判定半径、当前航向、当前位置/目标点的海况、局部 A\* 绕行目标和新增航点数。F4 地图会用粉色框标记当前 waypoint，用橙色框标记局部 A\* 目标。
+- 关闭 F4 回到航行画面后，如果发生停滞、局部 A\* 插入或近岸切轴，画面左上会显示自动导航诊断浮层，并在 waypoint 位于当前视野内时标出 `WP N`。
 
 进度目前按 waypoint 推进计算：
 
@@ -260,13 +265,15 @@ useAlternateAxis = true;
 
 ## 到达判定
 
-当前有两种到达距离：
+当前有三类到达距离：
 
 - 普通 waypoint：`REACHED_WAYPOINT_DISTANCE`（普通策略 = 32px）
-- 超远航线 waypoint：`DEEP_ROUTE_REACHED_WAYPOINT_DISTANCE`（= 64px）
+- 超远航线开阔海域 waypoint：`DEEP_ROUTE_OPEN_SEA_REACHED_WAYPOINT_DISTANCE`（= 64px）
+- 超远航线近岸 waypoint：`DEEP_ROUTE_COASTAL_REACHED_WAYPOINT_DISTANCE`（= 12px）
+- 超远航线危险近岸 waypoint：`DEEP_ROUTE_HAZARDOUS_COAST_REACHED_WAYPOINT_DISTANCE`（= 4px）
 - 最终目标点：`REACHED_TARGET_DISTANCE`（= 8px）
 
-普通 waypoint 到达半径较大，避免船为了精确命中贴岸 waypoint 而卡住。超远航线的 waypoint 间距只有 4px，64px 前视距离能自然跳过贴岸点，防止在海峡窄口卡死。最终目标点到达半径较小，避免离目标港太远就结束自动导航。
+普通 waypoint 到达半径较大，避免船为了精确命中贴岸 waypoint 而卡住。超远航线的 waypoint 间距只有 4px，开阔海域使用 64px 前视距离，减少远洋段逐点追踪的抖动和耗时；近岸会收紧到 12px，危险近岸进一步收紧到 4px，避免在 Cape Town、马来西亚群岛这类急弯/窄水道处过早跳过关键绕行点。最终目标点到达半径较小，避免离目标港太远就结束自动导航。
 
 ## Bug 记录：Lisbon 到 Barcelona 无法规划航线
 
@@ -540,7 +547,7 @@ Lisbon 到 Macao 必须经过马六甲海峡（宽度约 20–40 tile）。在 `
 
 马六甲海峡极窄（~20–40px），waypoint 间距 4px。当船卡住时，次轴方向（主方向的垂直轴）恰好指向马来半岛或苏门答腊，船完全动弹不了。`stagnantMoves` 持续累积至数百次，`useAlternateAxis` 无法提供帮助。
 
-修复：超远航线的 waypoint 到达半径从 32px 提升到 64px（`DEEP_ROUTE_REACHED_WAYPOINT_DISTANCE`）。4px 间距下 64px = 16 个 waypoint 的前视距离，海峡内的贴岸点会被自然跳过，不再进入卡死状态。
+早期修复曾把超远航线的 waypoint 到达半径从 32px 提升到 64px。后续 Lisbon -> Macao 回归暴露出统一 64px 会在 Cape Town 等近岸急弯过早跳点，因此当前实现已改为按海况动态判定：开阔海域 64px、近岸 12px、危险近岸 4px。这样既保留远洋段的前视能力，也避免近岸关键绕行点被提前跳过。
 
 ### 根因二：微小振荡导致阈值无法触发
 
@@ -562,7 +569,7 @@ Lisbon 到 Macao 必须经过马六甲海峡（宽度约 20–40 tile）。在 `
 沿路径向前扫描，找首个物理距离 ≥ 100px 的 waypoint（上限 path.length-2）
   ↓
 找到有效目标？
-  是 → findSeaPath(当前位置, 目标, 8px 格, 2000 节点)
+  是 → findSeaPath(当前位置, 目标, 4px 格, 5000 节点，关闭海岸惩罚，开启线段通海检查)
     → 成功：把绕路段插入路径替换堵死段，返回 newPath
     → 失败：fallback skip 4 个 waypoint
   否 → skip 4 个 waypoint
@@ -570,6 +577,50 @@ stagnantMoves = 0, useAlternateAxis = false
 ```
 
 `newPath` 由 `actionsWorld.ts` 的 `updateAutoNavigation` 应用到状态。普通策略（balanced/detailed/offshore）不受任何影响，Hormuz/Mombasa 回归测试全部通过。
+
+## Bug 记录：Lisbon 到 Macao 在 Cape Town 和马来西亚近岸卡住
+
+记录日期：2026-05-29
+
+问题现象：
+
+- 从 Lisbon 使用超远航线自动导航到 Macao。
+- 船通过 Cape Town 北侧小角前，会在南非西岸附近贴岸来回顶住。
+- Cape Town 修复后，船继续航行到马来西亚/马六甲附近，又被岛屿和半岛边缘挡住。诊断浮层可见当前 `WP` 编号不断增加，但船仍在岸边推不出去。
+
+根因：
+
+1. **超远航线统一 64px 到达半径过大。**
+   64px 前视距离适合开阔海面，但在 Cape Town 这种急弯近岸处会提前跳过一串绕角 waypoint，直接追向隔着陆地的后续点。局部 A\* 插入绕行后，也会被同样的大半径继续跳过。
+
+2. **局部 A\* 只判断网格中心点是否为海。**
+   马来西亚附近有很薄的岛屿/陆地带。两个 waypoint 中心点都可能是海，但它们之间的线段实际穿过陆地，船体移动时会撞岸。
+
+3. **局部 A\* 允许斜向切角。**
+   规划器允许从一个海格斜向进入另一个海格，即使横向/纵向相邻格是陆地。实际 `worldPlayer.move()` 的船体碰撞不会允许这种“贴角穿过去”的移动，第一步就会停住。
+
+4. **近岸主轴被挡时切轴太慢。**
+   船到达某些危险近岸点时，朝 waypoint 的主轴方向被陆地挡住；向另一轴退半格就能继续，但旧逻辑要等多次停滞后才进入 `useAlternateAxis`。
+
+修复：
+
+- 超远航线 waypoint 到达半径按海况动态选择：
+  - 开阔海域：64px。
+  - 近岸：12px。
+  - 危险近岸：4px。
+- `findSeaPath()` 增加 `useSegmentClearance` 选项。开启后，相邻网格中心点之间的整条线都必须保持通海，否则该边不可走。
+- A\* 邻居扩展禁止斜向切角：斜向移动时，横向和纵向两个相邻格也必须可通海。
+- 超远航线的局部脱困 A\* 改为 `4 x 4` 精细网格、5000 节点、关闭海岸惩罚、开启线段通海检查。它只负责脱困，优先保证“能走”，不再在局部绕行里为了离岸距离扩大搜索量。
+- `getAutoNavigationHeading()` 在 deep 策略下增加近岸可移动性检查：如果当前主航向实际无法移动，而另一轴可以移动，会立即返回“近岸切轴”，不用等待停滞计数累积。
+- 自动导航状态新增 `debug`，F4 世界地图和航行画面诊断浮层可以显示当前 waypoint、判定半径、航向、海况、A\* 目标和切轴/失败原因。
+
+验证：
+
+- 新增 Cape Town 近岸半径测试：确认危险近岸 waypoint 判定半径收紧到 4px。
+- 新增马来西亚局部回归：从截图坐标 `1498,586` 到 A\* 目标 `1572,516`，确认绕行路径不会斜向切角或穿过薄陆地带，并能通过局部岛屿。
+- `npm test -- --runInBand src/game/world/autoNavigation.test.ts`
+- `npm run lint`
+- `npm run build`
 
 ## 测试建议
 

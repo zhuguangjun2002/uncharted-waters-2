@@ -4,7 +4,7 @@ import type { Port } from '../game/port/port';
 import type { World } from '../game/world/world';
 import type { QuestId } from '../interface/quest/questData';
 import { ItemId } from '../data/itemData';
-import type { Position } from '../types';
+import type { Direction, Position } from '../types';
 import type { AutoNavigationStrategyId } from '../game/world/autoNavigation';
 
 export type Stage = 'world' | 'port' | 'building';
@@ -43,6 +43,37 @@ export interface AutoNavigationState {
   lastPosition: Position | null;
   stagnantMoves: number;
   useAlternateAxis: boolean;
+  debug: AutoNavigationDebug | null;
+}
+
+export type AutoNavigationDebugReason =
+  | 'tracking'
+  | 'arrived'
+  | 'stagnant-alternate-axis'
+  | 'coastal-axis-switch'
+  | 'deep-detour-created'
+  | 'deep-detour-failed'
+  | 'deep-detour-target-too-close'
+  | 'deep-stagnant-skip';
+
+export interface AutoNavigationDebug {
+  position: Position;
+  heading: Direction | '';
+  waypoint: Position | null;
+  waypointIndex: number;
+  waypointCount: number;
+  distanceToWaypoint: number | null;
+  reachedDistance: number | null;
+  positionSea: boolean;
+  waypointSea: boolean | null;
+  positionOpenSea: boolean | null;
+  waypointOpenSea: boolean | null;
+  reason: AutoNavigationDebugReason;
+  message: string;
+  detourTarget: Position | null;
+  detourTargetIndex: number | null;
+  detourTargetDistance: number | null;
+  detourPathLength: number | null;
 }
 
 export interface State {
@@ -83,6 +114,7 @@ export const getDefaultAutoNavigation = (): AutoNavigationState => ({
   lastPosition: null,
   stagnantMoves: 0,
   useAlternateAxis: false,
+  debug: null,
 });
 
 const state = {

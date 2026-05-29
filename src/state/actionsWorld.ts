@@ -74,6 +74,7 @@ export const startAutoNavigation = (
     lastPosition: null,
     stagnantMoves: 0,
     useAlternateAxis: false,
+    debug: null,
   };
 
   return 'started';
@@ -92,12 +93,14 @@ export const updateAutoNavigation = (position: Position): Direction | '' => {
     stagnantMoves,
     useAlternateAxis,
     newPath,
+    debug,
   } = getAutoNavigationHeading(position, state.autoNavigation);
 
   state.autoNavigation.waypointIndex = waypointIndex;
   state.autoNavigation.lastPosition = lastPosition;
   state.autoNavigation.stagnantMoves = stagnantMoves;
   state.autoNavigation.useAlternateAxis = useAlternateAxis;
+  state.autoNavigation.debug = debug;
   if (newPath) {
     state.autoNavigation.path = newPath;
   }

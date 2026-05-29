@@ -7,6 +7,7 @@ import PortInfo from './port/PortInfo';
 import Provisions from './world/Provisions';
 import Indicators from './world/Indicators';
 import WorldMap from './world/WorldMap';
+import AutoNavigationDebugOverlay from './world/AutoNavigationDebugOverlay';
 import Camera from './Camera';
 import updateInterface from '../state/updateInterface';
 import Building from './port/Building';
@@ -86,6 +87,12 @@ function Interface({ resolve }: Props) {
           </div>
           {worldMap.visible && (
             <WorldMap
+              position={worldMap.position}
+              autoNavigation={worldMap.autoNavigation}
+            />
+          )}
+          {!worldMap.visible && !inPort && (
+            <AutoNavigationDebugOverlay
               position={worldMap.position}
               autoNavigation={worldMap.autoNavigation}
             />

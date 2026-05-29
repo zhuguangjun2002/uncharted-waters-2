@@ -168,6 +168,37 @@ const drawAutoNavigation = (
   drawPath(context, path.slice(waypointIndex), targetPosition, '#facc15', 2);
 };
 
+const drawDebugPoint = (
+  context: CanvasRenderingContext2D,
+  position: Position,
+  color: string,
+) => {
+  const { x, y } = toMapPosition(position);
+
+  context.strokeStyle = color;
+  context.lineWidth = 2;
+  context.strokeRect(x - 3, y - 3, 7, 7);
+  context.fillStyle = color;
+  context.fillRect(x - 1, y - 1, 3, 3);
+};
+
+const drawAutoNavigationDebug = (
+  context: CanvasRenderingContext2D,
+  { debug }: AutoNavigationState,
+) => {
+  if (!debug) {
+    return;
+  }
+
+  if (debug.waypoint) {
+    drawDebugPoint(context, debug.waypoint, '#fb7185');
+  }
+
+  if (debug.detourTarget) {
+    drawDebugPoint(context, debug.detourTarget, '#f97316');
+  }
+};
+
 const getAutoNavigationProgress = ({
   enabled,
   path,
@@ -178,6 +209,63 @@ const getAutoNavigationProgress = ({
   }
 
   return Math.min(100, Math.floor((waypointIndex / path.length) * 100));
+};
+
+type AutoNavigationDebugReason = NonNullable<
+  AutoNavigationState['debug']
+>['reason'];
+
+const DEBUG_REASON_LABELS: Record<AutoNavigationDebugReason, string> = {
+  tracking: '追踪中',
+  arrived: '已到达',
+  'stagnant-alternate-axis': '单轴脱困',
+  'coastal-axis-switch': '近岸切轴',
+  'deep-detour-created': 'A* 绕行已插入',
+  'deep-detour-failed': 'A* 绕行失败',
+  'deep-detour-target-too-close': '绕行目标过近',
+  'deep-stagnant-skip': '跳过航点',
+};
+
+const formatDebugPosition = (position: Position | null) =>
+  position ? `${Math.round(position.x)}, ${Math.round(position.y)}` : '无';
+
+const formatDebugDistance = (distance: number | null) =>
+  distance === null ? '无' : distance.toFixed(1);
+
+const formatSeaState = (isSea: boolean | null, isOpenSea: boolean | null) => {
+  if (isSea === null || isOpenSea === null) {
+    return '未知';
+  }
+
+  if (!isSea) {
+    return '陆地/碰撞';
+  }
+
+  return isOpenSea ? '开阔海面' : '近岸海面';
+};
+
+const getDeepRouteButtonClassName = (deepRouteStatus: DeepRouteStatus) => {
+  if (deepRouteStatus === 'computing') {
+    return 'border-lime-700 text-lime-400 hover:bg-slate-800';
+  }
+
+  if (deepRouteStatus === 'ready') {
+    return 'border-lime-500 text-lime-300 hover:bg-slate-800';
+  }
+
+  return 'border-slate-500 hover:bg-slate-800';
+};
+
+const getDeepRouteButtonLabel = (deepRouteStatus: DeepRouteStatus) => {
+  if (deepRouteStatus === 'computing') {
+    return '搜索中...';
+  }
+
+  if (deepRouteStatus === 'ready') {
+    return '重新深度搜索';
+  }
+
+  return '深度搜索';
 };
 
 export default function WorldMap({ position, autoNavigation }: Props) {
@@ -243,6 +331,7 @@ export default function WorldMap({ position, autoNavigation }: Props) {
       );
     }
     drawAutoNavigation(context, autoNavigation);
+    drawAutoNavigationDebug(context, autoNavigation);
     drawPosition(context, position);
   }, [
     autoNavigation,
@@ -289,6 +378,7 @@ export default function WorldMap({ position, autoNavigation }: Props) {
     0,
     autoNavigation.path.length - completedWaypoints,
   );
+  const autoNavigationDebug = autoNavigation.debug;
 
   const handleSelectionChange = () => {
     setPreviewPaths({});
@@ -345,7 +435,9 @@ export default function WorldMap({ position, autoNavigation }: Props) {
         setDeepRouteNodes(finalNodes);
         setDeepRouteStatus('ready');
         setStatus(
-          `深度搜索完成：找到 ${selectedPort.name} 的航线（共探索 ${finalNodes.toLocaleString()} 个节点）。`,
+          `深度搜索完成：找到 ${
+            selectedPort.name
+          } 的航线（共探索 ${finalNodes.toLocaleString()} 个节点）。`,
         );
       } else {
         setDeepRouteStatus('failed');
@@ -365,7 +457,9 @@ export default function WorldMap({ position, autoNavigation }: Props) {
     handleSelectionChange();
   };
 
-  const handlePortFilterKeyDown = (e: React.KeyboardEvent<HTMLInputElement>) => {
+  const handlePortFilterKeyDown = (
+    e: React.KeyboardEvent<HTMLInputElement>,
+  ) => {
     if (e.key === 'ArrowDown') {
       e.preventDefault();
       setHighlightIndex((i) =>
@@ -421,7 +515,8 @@ export default function WorldMap({ position, autoNavigation }: Props) {
   const handleStartAutoNavigation = () => {
     const isDeepReady = deepRouteStatus === 'ready' && deepRoutePath.length > 0;
     const selectedPath = previewPaths[selectedStrategyId] || [];
-    const canStart = isDeepReady || (previewStatus === 'ready' && selectedPath.length > 0);
+    const canStart =
+      isDeepReady || (previewStatus === 'ready' && selectedPath.length > 0);
 
     if (!canStart) {
       setStatus(
@@ -529,13 +624,9 @@ export default function WorldMap({ position, autoNavigation }: Props) {
             deepRouteStatus === 'ready' ||
             deepRouteStatus === 'failed') && (
             <button
-              className={`border px-3 py-1 text-base disabled:text-slate-500 ${
-                deepRouteStatus === 'computing'
-                  ? 'border-lime-700 text-lime-400 hover:bg-slate-800'
-                  : deepRouteStatus === 'ready'
-                    ? 'border-lime-500 text-lime-300 hover:bg-slate-800'
-                    : 'border-slate-500 hover:bg-slate-800'
-              }`}
+              className={`border px-3 py-1 text-base disabled:text-slate-500 ${getDeepRouteButtonClassName(
+                deepRouteStatus,
+              )}`}
               disabled={deepRouteStatus === 'computing'}
               type="button"
               onClick={
@@ -544,11 +635,7 @@ export default function WorldMap({ position, autoNavigation }: Props) {
                   : handleDeepRoute
               }
             >
-              {deepRouteStatus === 'computing'
-                ? '搜索中...'
-                : deepRouteStatus === 'ready'
-                  ? '重新深度搜索'
-                  : '深度搜索'}
+              {getDeepRouteButtonLabel(deepRouteStatus)}
             </button>
           )}
           <button
@@ -656,7 +743,8 @@ export default function WorldMap({ position, autoNavigation }: Props) {
               <div className="h-full w-full animate-pulse bg-lime-500" />
             </div>
             <div className="mt-1 text-xs text-slate-500">
-              使用 4×4 精细网格、轻量海岸惩罚（4px 内），确保穿越海峡同时远离峭壁。算法分块执行，界面保持响应。
+              使用 4×4 精细网格、轻量海岸惩罚（4px
+              内），确保穿越海峡同时远离峭壁。算法分块执行，界面保持响应。
             </div>
           </div>
         )}
@@ -669,7 +757,7 @@ export default function WorldMap({ position, autoNavigation }: Props) {
                 <span className="font-mono">
                   {deepRouteNodes.toLocaleString()}
                 </span>{' '}
-                个节点）—— 点击"自动导航"出发。
+                个节点）—— 点击“自动导航”出发。
               </span>
             </div>
           </div>
@@ -698,6 +786,47 @@ export default function WorldMap({ position, autoNavigation }: Props) {
               {autoNavigation.stagnantMoves} · 当前坐标：
               {Math.round(position.x)}, {Math.round(position.y)}
             </div>
+            {autoNavigationDebug && (
+              <div className="mt-2 space-y-1 border-t border-slate-800 pt-2 text-xs text-slate-400">
+                <div>
+                  诊断：{DEBUG_REASON_LABELS[autoNavigationDebug.reason]} ·{' '}
+                  {autoNavigationDebug.message}
+                </div>
+                <div>
+                  当前目标：第 {autoNavigationDebug.waypointIndex + 1}/
+                  {autoNavigationDebug.waypointCount} 个 @{' '}
+                  {formatDebugPosition(autoNavigationDebug.waypoint)} · 距离{' '}
+                  {formatDebugDistance(autoNavigationDebug.distanceToWaypoint)}
+                  px / 判定半径{' '}
+                  {formatDebugDistance(autoNavigationDebug.reachedDistance)}
+                  px · 航向 {autoNavigationDebug.heading || '无'}
+                </div>
+                <div>
+                  海况：当前位置{' '}
+                  {formatSeaState(
+                    autoNavigationDebug.positionSea,
+                    autoNavigationDebug.positionOpenSea,
+                  )}{' '}
+                  · 目标点{' '}
+                  {formatSeaState(
+                    autoNavigationDebug.waypointSea,
+                    autoNavigationDebug.waypointOpenSea,
+                  )}
+                </div>
+                {autoNavigationDebug.detourTarget && (
+                  <div>
+                    局部 A*：目标第{' '}
+                    {(autoNavigationDebug.detourTargetIndex ?? 0) + 1} 个 @{' '}
+                    {formatDebugPosition(autoNavigationDebug.detourTarget)} ·
+                    距离{' '}
+                    {formatDebugDistance(
+                      autoNavigationDebug.detourTargetDistance,
+                    )}
+                    px · 新增航点 {autoNavigationDebug.detourPathLength ?? 0}
+                  </div>
+                )}
+              </div>
+            )}
           </div>
         )}
       </div>
