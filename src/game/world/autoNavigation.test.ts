@@ -714,5 +714,19 @@ describe('auto navigation simulation', () => {
       expect(path.length).toBeGreaterThan(0);
       expect(path[path.length - 1]).toEqual(target);
     }, 60000);
+
+    test('deep route reaches Changan from half a world away (Lisbon)', async () => {
+      // The long haul (around Africa) must stay on the coarse grid: only the
+      // narrow channel into Changan is searched at tile resolution. Searching
+      // the whole route at tile resolution previously exhausted ~400k nodes and
+      // failed.
+      const start = positionAdjacentToPort('1');
+      const target = positionAdjacentToPort('98');
+      const { promise } = findDeepRoutePath(start, target, () => {});
+      const path = await promise;
+
+      expect(path.length).toBeGreaterThan(0);
+      expect(path[path.length - 1]).toEqual(target);
+    }, 60000);
   });
 });

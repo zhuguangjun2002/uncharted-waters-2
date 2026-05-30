@@ -1075,8 +1075,10 @@ const getPreviewGridBudgetMultiplier = (gridSize: number) => {
 
 const DEEP_ROUTE_CHUNK_NODES = 3000;
 const DEEP_ROUTE_COAST_RADIUS = 3; // check 3 grid-cells out: penalty 3/2/1 — keeps bays expensive vs open-sea detour
-// Cap the tile-resolution fallback so an unreachable target fails gracefully
-// instead of exploring the entire ocean tile by tile.
+// Cap the tile-resolution channel escape so a target enclosed by land (or with
+// no coarse-reachable water nearby) fails gracefully instead of flooding the
+// whole ocean tile by tile. The escape is local — it only has to thread the
+// channel out to open water — so it normally finishes in a few thousand nodes.
 const DEEP_ROUTE_TILE_MAX_NODES = 300000;
 
 export interface DeepRouteHandle {
@@ -1084,15 +1086,26 @@ export interface DeepRouteHandle {
   abort: () => void;
 }
 
+interface ChunkedSeaSearchResult {
+  // Grid-cell waypoints from the start (exclusive) to wherever the search
+  // stopped, inclusive of the target when it was reached.
+  path: Position[];
+  // Whether the search actually reached the target, vs. stopping at the
+  // reachable cell closest to it (only possible when returnClosestOnExhaust).
+  reachedTarget: boolean;
+}
+
 interface ChunkedSeaSearch {
-  promise: Promise<Position[]>;
+  promise: Promise<ChunkedSeaSearchResult>;
   abort: () => void;
 }
 
 /*
   Chunked A* over a sea grid of the given cell size, run in setTimeout slices so
-  the UI stays responsive. Resolves with a tile path, or [] if no path is found
-  within maxNodes. Extracted so the deep route can retry at finer resolutions.
+  the UI stays responsive. Resolves with a path to the target, or — when
+  returnClosestOnExhaust is set and the target is unreachable — a path to the
+  reachable cell closest to it (so a finer search can take over the last leg).
+  Extracted so the deep route can retry at finer resolutions.
 */
 const createChunkedSeaSearch = (
   start: Position,
@@ -1101,6 +1114,7 @@ const createChunkedSeaSearch = (
   onProgress: (nodesSearched: number) => void,
   maxNodes = Number.POSITIVE_INFINITY,
   useCoastPenalty = true,
+  returnClosestOnExhaust = false,
 ): ChunkedSeaSearch => {
   let aborted = false;
   const columns = WORLD_MAP_COLUMNS;
@@ -1124,6 +1138,12 @@ const createChunkedSeaSearch = (
   const seaCache = new Map<string, boolean>();
   const coastPenaltyCache = new Map<string, number>();
   let totalSearched = 0;
+  // Closest reachable cell to the target, by heuristic distance. When the
+  // target is unreachable (a narrow channel the grid can't represent), this is
+  // the cell at the channel mouth on the reachable side — the hand-off point
+  // for a finer search.
+  let closestKey = startKey;
+  let closestHeuristic = getHeuristic(startGrid, targetGrid, gridColumns);
 
   openHeap.push({
     position: startGrid,
@@ -1194,10 +1214,15 @@ const createChunkedSeaSearch = (
     return k === targetKey || k === startKey || isDeepGridSea(gp);
   };
 
-  const promise = new Promise<Position[]>((resolve) => {
+  const buildPath = (key: string) =>
+    reconstructPath(cameFrom, key, positions)
+      .slice(1)
+      .map((gp) => gridToPosition(gp, columns, rows, gridSize));
+
+  const promise = new Promise<ChunkedSeaSearchResult>((resolve) => {
     const runChunk = () => {
       if (aborted) {
-        resolve([]);
+        resolve({ path: [], reachedTarget: false });
         return;
       }
 
@@ -1211,20 +1236,22 @@ const createChunkedSeaSearch = (
           totalSearched += 1;
           closedSet.add(currentKey);
 
-          if (currentKey === targetKey) {
-            const gridPath = reconstructPath(cameFrom, currentKey, positions);
+          const heuristic = getHeuristic(current, targetGrid, gridColumns);
 
-            if (!gridPath.length) {
-              resolve([]);
+          if (heuristic < closestHeuristic) {
+            closestHeuristic = heuristic;
+            closestKey = currentKey;
+          }
+
+          if (currentKey === targetKey) {
+            const path = buildPath(currentKey);
+
+            if (!path.length) {
+              resolve({ path: [], reachedTarget: false });
               return;
             }
 
-            resolve(
-              gridPath
-                .slice(1)
-                .map((gp) => gridToPosition(gp, columns, rows, gridSize))
-                .concat(target),
-            );
+            resolve({ path: path.concat(target), reachedTarget: true });
             return;
           }
 
@@ -1292,7 +1319,12 @@ const createChunkedSeaSearch = (
       }
 
       if (openHeap.size === 0 || totalSearched >= maxNodes) {
-        resolve([]);
+        if (returnClosestOnExhaust && closestKey !== startKey) {
+          resolve({ path: buildPath(closestKey), reachedTarget: false });
+        } else {
+          resolve({ path: [], reachedTarget: false });
+        }
+
         return;
       }
 
@@ -1312,9 +1344,20 @@ const createChunkedSeaSearch = (
 };
 
 /*
-  Deep route search: tries the fine 4x4 grid first, then falls back to a
-  tile-resolution search (capped) for ports reachable only through very narrow
-  channels. Progress is reported cumulatively across tiers.
+  Deep route search for long-haul voyages, including ports reachable only
+  through channels too narrow for the coarse grid to represent (e.g. Changan).
+
+  Two phases, so the expensive tile resolution stays local:
+    1. Long-haul coarse (4x4) search from the start toward the target. If the
+       target is open water this reaches it directly and we are done. If it sits
+       behind a narrow channel the coarse grid can't represent, the search floods
+       the whole reachable ocean and reports the reachable cell closest to the
+       target — the channel mouth on the open-sea side.
+    2. From that channel mouth, a tile-resolution search threads the final leg
+       into the target, capped so an unreachable target fails gracefully.
+
+  Crucially the half-globe leg is never searched at tile resolution, which is
+  what made Lisbon -> Changan explore ~400k nodes and fail.
 */
 export const findDeepRoutePath = (
   start: Position,
@@ -1324,58 +1367,60 @@ export const findDeepRoutePath = (
   let aborted = false;
   let activeSearch: ChunkedSeaSearch | null = null;
 
-  const tiers: { gridSize: number; maxNodes: number; useCoastPenalty: boolean }[] =
-    [
-      {
-        gridSize: FINE_GRID_SIZE,
-        maxNodes: Number.POSITIVE_INFINITY,
-        useCoastPenalty: true,
-      },
-      // Tile resolution: coast penalty is meaningless in a 1-tile channel and
-      // its ring-scan would explode memory, so disable it.
-      {
-        gridSize: TILE_GRID_SIZE,
-        maxNodes: DEEP_ROUTE_TILE_MAX_NODES,
-        useCoastPenalty: false,
-      },
-    ];
-
   const promise = (async () => {
-    let baseOffset = 0;
+    let haulNodes = 0;
+    const haul = createChunkedSeaSearch(
+      start,
+      target,
+      FINE_GRID_SIZE,
+      (nodes) => {
+        haulNodes = nodes;
+        onProgress(nodes);
+      },
+      Number.POSITIVE_INFINITY,
+      true,
+      true,
+    );
+    activeSearch = haul;
 
-    for (let i = 0; i < tiers.length; i += 1) {
-      if (aborted) {
-        return [];
-      }
+    const { path: haulPath, reachedTarget } = await haul.promise;
 
-      const { gridSize, maxNodes, useCoastPenalty } = tiers[i];
-      const offset = baseOffset;
-      let lastReported = 0;
-
-      const search = createChunkedSeaSearch(
-        start,
-        target,
-        gridSize,
-        (nodes) => {
-          lastReported = nodes;
-          onProgress(offset + nodes);
-        },
-        maxNodes,
-        useCoastPenalty,
-      );
-      activeSearch = search;
-
-      // eslint-disable-next-line no-await-in-loop
-      const path = await search.promise;
-
-      if (path.length) {
-        return path;
-      }
-
-      baseOffset += lastReported;
+    if (aborted) {
+      return [];
     }
 
-    return [];
+    if (reachedTarget) {
+      return haulPath;
+    }
+
+    if (!haulPath.length) {
+      return [];
+    }
+
+    // haulPath stops at the channel mouth; thread the final narrow leg into the
+    // target at tile resolution. Coast penalty is meaningless in a 1-tile
+    // channel and its ring-scan would explode memory, so disable it.
+    const channelMouth = haulPath[haulPath.length - 1];
+    const channel = createChunkedSeaSearch(
+      channelMouth,
+      target,
+      TILE_GRID_SIZE,
+      (nodes) => onProgress(haulNodes + nodes),
+      DEEP_ROUTE_TILE_MAX_NODES,
+      false,
+    );
+    activeSearch = channel;
+
+    const { path: channelPath, reachedTarget: channelReached } =
+      await channel.promise;
+
+    if (aborted || !channelReached) {
+      return [];
+    }
+
+    // haulPath ends at the channel mouth and channelPath excludes its own start
+    // (the mouth), so they stitch without a duplicated point.
+    return [...haulPath, ...channelPath];
   })();
 
   return {
