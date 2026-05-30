@@ -1093,6 +1093,10 @@ interface ChunkedSeaSearchResult {
   // Whether the search actually reached the target, vs. stopping at the
   // reachable cell closest to it (only possible when returnClosestOnExhaust).
   reachedTarget: boolean;
+  // Number of cells expanded. When the search exhausts its open set without
+  // reaching the target this equals the size of the start's connected component
+  // — used to tell the main ocean from a small channel-locked pocket.
+  searchedNodes: number;
 }
 
 interface ChunkedSeaSearch {
@@ -1222,7 +1226,7 @@ const createChunkedSeaSearch = (
   const promise = new Promise<ChunkedSeaSearchResult>((resolve) => {
     const runChunk = () => {
       if (aborted) {
-        resolve({ path: [], reachedTarget: false });
+        resolve({ path: [], reachedTarget: false, searchedNodes: totalSearched });
         return;
       }
 
@@ -1247,11 +1251,19 @@ const createChunkedSeaSearch = (
             const path = buildPath(currentKey);
 
             if (!path.length) {
-              resolve({ path: [], reachedTarget: false });
+              resolve({
+                path: [],
+                reachedTarget: false,
+                searchedNodes: totalSearched,
+              });
               return;
             }
 
-            resolve({ path: path.concat(target), reachedTarget: true });
+            resolve({
+              path: path.concat(target),
+              reachedTarget: true,
+              searchedNodes: totalSearched,
+            });
             return;
           }
 
@@ -1320,9 +1332,13 @@ const createChunkedSeaSearch = (
 
       if (openHeap.size === 0 || totalSearched >= maxNodes) {
         if (returnClosestOnExhaust && closestKey !== startKey) {
-          resolve({ path: buildPath(closestKey), reachedTarget: false });
+          resolve({
+            path: buildPath(closestKey),
+            reachedTarget: false,
+            searchedNodes: totalSearched,
+          });
         } else {
-          resolve({ path: [], reachedTarget: false });
+          resolve({ path: [], reachedTarget: false, searchedNodes: totalSearched });
         }
 
         return;
@@ -1345,19 +1361,24 @@ const createChunkedSeaSearch = (
 
 /*
   Deep route search for long-haul voyages, including ports reachable only
-  through channels too narrow for the coarse grid to represent (e.g. Changan).
+  through channels too narrow for the coarse grid to represent (e.g. Changan),
+  whether that port is the start or the target.
 
-  Two phases, so the expensive tile resolution stays local:
-    1. Long-haul coarse (4x4) search from the start toward the target. If the
-       target is open water this reaches it directly and we are done. If it sits
-       behind a narrow channel the coarse grid can't represent, the search floods
-       the whole reachable ocean and reports the reachable cell closest to the
-       target — the channel mouth on the open-sea side.
-    2. From that channel mouth, a tile-resolution search threads the final leg
-       into the target, capped so an unreachable target fails gracefully.
+  The expensive tile resolution stays local to the channel; the half-globe leg
+  is always coarse (4x4), which is what kept Lisbon -> Changan from exploring
+  ~400k tiles and failing.
 
-  Crucially the half-globe leg is never searched at tile resolution, which is
-  what made Lisbon -> Changan explore ~400k nodes and fail.
+  How it works:
+    1. Coarse search from the start toward the target. If it reaches the target
+       (both endpoints on open water) we are done.
+    2. Otherwise the endpoints are in different coarse components — one is the
+       main ocean, the other a channel-locked port whose cell the coarse grid
+       can't connect. We coarse-flood from each endpoint; the larger flood is the
+       main ocean. Its flood reports the reachable cell closest to the locked
+       endpoint — the channel mouth on the open-sea side.
+    3. A capped tile-resolution search threads the short leg between that mouth
+       and the locked port, and we stitch it onto the coarse haul (reversing the
+       haul when the start is the locked endpoint).
 */
 export const findDeepRoutePath = (
   start: Position,
@@ -1366,61 +1387,104 @@ export const findDeepRoutePath = (
 ): DeepRouteHandle => {
   let aborted = false;
   let activeSearch: ChunkedSeaSearch | null = null;
+  let baseNodes = 0;
 
-  const promise = (async () => {
-    let haulNodes = 0;
-    const haul = createChunkedSeaSearch(
-      start,
-      target,
+  const runCoarse = (from: Position, to: Position) =>
+    createChunkedSeaSearch(
+      from,
+      to,
       FINE_GRID_SIZE,
-      (nodes) => {
-        haulNodes = nodes;
-        onProgress(nodes);
-      },
+      (nodes) => onProgress(baseNodes + nodes),
       Number.POSITIVE_INFINITY,
       true,
       true,
     );
-    activeSearch = haul;
 
-    const { path: haulPath, reachedTarget } = await haul.promise;
+  // Tile-resolution leg threading a narrow channel between an open-water mouth
+  // and a channel-locked port. Coast penalty is meaningless in a 1-tile channel
+  // and its ring-scan would explode memory, so it stays off.
+  const runChannel = (from: Position, to: Position) =>
+    createChunkedSeaSearch(
+      from,
+      to,
+      TILE_GRID_SIZE,
+      (nodes) => onProgress(baseNodes + nodes),
+      DEEP_ROUTE_TILE_MAX_NODES,
+      false,
+    );
+
+  // Reverse a coarse path that runs anchor -> ... -> end so it runs the other
+  // way, ending exactly at `end`. Drops the leading anchor so it can be stitched
+  // straight after a leg that already ends at the anchor.
+  const reverseCoarsePath = (path: Position[], end: Position) =>
+    path.slice().reverse().slice(1).concat(end);
+
+  const promise = (async () => {
+    const forward = runCoarse(start, target);
+    activeSearch = forward;
+    const forwardResult = await forward.promise;
+    baseNodes += forwardResult.searchedNodes;
 
     if (aborted) {
       return [];
     }
 
-    if (reachedTarget) {
-      return haulPath;
+    if (forwardResult.reachedTarget) {
+      return forwardResult.path;
     }
 
-    if (!haulPath.length) {
+    // Endpoints are in different coarse components. Flood from the target side
+    // too, then treat the endpoint in the larger (main-ocean) component as the
+    // coarse haul and tile-bridge the other (channel-locked) endpoint.
+    const backward = runCoarse(target, start);
+    activeSearch = backward;
+    const backwardResult = await backward.promise;
+    baseNodes += backwardResult.searchedNodes;
+
+    if (aborted) {
       return [];
     }
 
-    // haulPath stops at the channel mouth; thread the final narrow leg into the
-    // target at tile resolution. Coast penalty is meaningless in a 1-tile
-    // channel and its ring-scan would explode memory, so disable it.
-    const channelMouth = haulPath[haulPath.length - 1];
-    const channel = createChunkedSeaSearch(
-      channelMouth,
-      target,
-      TILE_GRID_SIZE,
-      (nodes) => onProgress(haulNodes + nodes),
-      DEEP_ROUTE_TILE_MAX_NODES,
-      false,
-    );
+    const startInMainOcean =
+      forwardResult.searchedNodes >= backwardResult.searchedNodes;
+    const haul = startInMainOcean ? forwardResult : backwardResult;
+
+    // The main-ocean flood's closest reachable cell is the locked port's mouth.
+    if (!haul.path.length) {
+      return [];
+    }
+
+    const mouth = haul.path[haul.path.length - 1];
+
+    if (startInMainOcean) {
+      // Start is open water; the target is the channel-locked port.
+      const channel = runChannel(mouth, target);
+      activeSearch = channel;
+      const channelResult = await channel.promise;
+
+      if (aborted || !channelResult.reachedTarget) {
+        return [];
+      }
+
+      // haul.path ends at the mouth; channelResult.path excludes its own start
+      // (the mouth), so they stitch without a duplicated point.
+      return [...haul.path, ...channelResult.path];
+    }
+
+    // Target is open water; the start is the channel-locked port. Thread the
+    // channel out from the start to the mouth, then run the coarse haul (which
+    // flooded from the target) in reverse from the mouth to the target.
+    const channel = runChannel(start, mouth);
     activeSearch = channel;
+    const channelResult = await channel.promise;
 
-    const { path: channelPath, reachedTarget: channelReached } =
-      await channel.promise;
-
-    if (aborted || !channelReached) {
+    if (aborted || !channelResult.reachedTarget) {
       return [];
     }
 
-    // haulPath ends at the channel mouth and channelPath excludes its own start
-    // (the mouth), so they stitch without a duplicated point.
-    return [...haulPath, ...channelPath];
+    // channelResult.path ends exactly at the mouth; reverseCoarsePath drops the
+    // duplicated mouth and ends exactly at the target.
+    return [...channelResult.path, ...reverseCoarsePath(haul.path, target)];
   })();
 
   return {

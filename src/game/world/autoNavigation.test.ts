@@ -728,5 +728,19 @@ describe('auto navigation simulation', () => {
       expect(path.length).toBeGreaterThan(0);
       expect(path[path.length - 1]).toEqual(target);
     }, 60000);
+
+    test('deep route departs Changan for a far open-water port (Jamaica)', async () => {
+      // Changan is now the channel-locked *start*: its coarse cell is isolated
+      // from the main ocean, so flooding from it goes nowhere. The search must
+      // flood from the open-water target (Jamaica), find Changan's channel mouth,
+      // tile-thread out of the channel, then run the coarse haul in reverse.
+      const start = positionAdjacentToPort('98');
+      const target = positionAdjacentToPort('51');
+      const { promise } = findDeepRoutePath(start, target, () => {});
+      const path = await promise;
+
+      expect(path.length).toBeGreaterThan(0);
+      expect(path[path.length - 1]).toEqual(target);
+    }, 60000);
   });
 });
