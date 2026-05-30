@@ -35,6 +35,12 @@ const DEEP_ROUTE_OPEN_SEA_REACHED_WAYPOINT_DISTANCE = DEFAULT_GRID_SIZE * 8;
 const DEEP_ROUTE_COASTAL_REACHED_WAYPOINT_DISTANCE = FINE_GRID_SIZE * 3;
 const DEEP_ROUTE_HAZARDOUS_COAST_REACHED_WAYPOINT_DISTANCE = FINE_GRID_SIZE;
 const PREVIEW_SEARCHED_GRID_NODES = 400;
+// When segment clearance is on, exempt moves whose grid cell sits within this
+// many px of the start or target. Cell centres near a harbour are unavoidably a
+// little inland, so the approach legs sample some land; a real isthmus (Panama)
+// is always far from both endpoints, so this only relaxes harbour approaches
+// while still refusing a coarse-grid hop straight across solid land.
+const SEGMENT_CLEARANCE_ENDPOINT_EXEMPT_RADIUS = 48;
 
 interface GridPosition {
   x: number;
@@ -330,6 +336,13 @@ export const isWorldSea = ({ x, y }: Position) => {
   });
 };
 
+const getDistance = (from: Position, to: Position) => {
+  const dx = getFromToAccountingForWrapAround(from.x, to.x);
+  const dy = to.y - from.y;
+
+  return Math.sqrt(dx * dx + dy * dy);
+};
+
 export const findSeaPath = ({
   start,
   target,
@@ -409,6 +422,16 @@ export const findSeaPath = ({
     const key = gridKey(gridPosition);
 
     return key === targetKey || key === startKey || isGridSea(gridPosition);
+  };
+
+  const isNearRouteEndpoint = (gridPosition: GridPosition) => {
+    const position = gridToPosition(gridPosition, columns, rows, gridSize);
+
+    return (
+      getDistance(start, position) <=
+        SEGMENT_CLEARANCE_ENDPOINT_EXEMPT_RADIUS ||
+      getDistance(target, position) <= SEGMENT_CLEARANCE_ENDPOINT_EXEMPT_RADIUS
+    );
   };
 
   const isGridSegmentSea = (from: GridPosition, to: GridPosition) => {
@@ -495,7 +518,10 @@ export const findSeaPath = ({
           const isAllowedSeaNode = isAllowedSeaGrid(neighbor);
           const isInBounds = isGridInBounds(neighbor);
           const hasSegmentClearance =
-            !useSegmentClearance || isGridSegmentSea(current, neighbor);
+            !useSegmentClearance ||
+            isNearRouteEndpoint(current) ||
+            isNearRouteEndpoint(neighbor) ||
+            isGridSegmentSea(current, neighbor);
 
           if (
             shouldCheckNeighbor &&
@@ -531,13 +557,6 @@ export const findSeaPath = ({
   }
 
   return [];
-};
-
-const getDistance = (from: Position, to: Position) => {
-  const dx = getFromToAccountingForWrapAround(from.x, to.x);
-  const dy = to.y - from.y;
-
-  return Math.sqrt(dx * dx + dy * dy);
 };
 
 // Samples the straight line between two world positions and returns false if any
@@ -1056,6 +1075,7 @@ export const createAutoNavigationPath = (
             gridSize,
             maxSearchedNodes,
             useCoastPenalty,
+            useSegmentClearance: true,
           }),
     [],
   );
@@ -1528,6 +1548,7 @@ export const createAutoNavigationPaths = (
                 ? maxSearchedNodes * getPreviewGridBudgetMultiplier(gridSize)
                 : maxSearchedNodes,
               useCoastPenalty,
+              useSegmentClearance: true,
             }),
           );
         }

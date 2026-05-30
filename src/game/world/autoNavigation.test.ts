@@ -479,6 +479,77 @@ describe('auto navigation simulation', () => {
     expect(paths.detailed?.length || 0).toBe(0);
   });
 
+  // Counts path segments that cross land away from either endpoint. Harbour
+  // approaches unavoidably clip a little coast, so segments whose endpoints are
+  // within the segment-clearance exempt radius of the start/target are ignored.
+  const countMidRouteLandCrossings = (
+    path: Position[],
+    start: Position,
+    target: Position,
+  ) => {
+    const exemptRadius = 48;
+    const endpointDistance = (from: Position, to: Position) => {
+      const dx = getFromToAccountingForWrapAround(from.x, to.x);
+      const dy = to.y - from.y;
+
+      return Math.sqrt(dx * dx + dy * dy);
+    };
+    const nearEndpoint = (point: Position) =>
+      endpointDistance(point, start) <= exemptRadius ||
+      endpointDistance(point, target) <= exemptRadius;
+
+    let previous = start;
+    let crossings = 0;
+
+    path.forEach((point) => {
+      const xDelta = getFromToAccountingForWrapAround(previous.x, point.x);
+      const yDelta = point.y - previous.y;
+      const steps = Math.max(Math.abs(xDelta), Math.abs(yDelta), 1);
+
+      if (!nearEndpoint(previous) && !nearEndpoint(point)) {
+        for (let step = 1; step <= steps; step += 1) {
+          const t = step / steps;
+
+          if (
+            !isWorldSea({
+              x: getXWrapAround(previous.x + xDelta * t),
+              y: previous.y + yDelta * t,
+            })
+          ) {
+            crossings += 1;
+            break;
+          }
+        }
+      }
+
+      previous = point;
+    });
+
+    return crossings;
+  };
+
+  // Lisbon -> Nome used to "found" an offshore preview route by hopping the
+  // coarse grid straight across the Panama isthmus. Segment clearance now
+  // refuses that, so no preview strategy may return a path that cuts mid-ocean
+  // land (the honest route is too long for the fast preview and is left to the
+  // deep search).
+  test('Lisbon to Nome preview never hops across the Panama isthmus', () => {
+    const start = { x: 838, y: 358 };
+    const target = positionAdjacentToPort('118');
+    const paths = createAutoNavigationPaths(
+      start,
+      target,
+      ['balanced', 'detailed', 'offshore'],
+      400,
+    );
+
+    (['balanced', 'detailed', 'offshore'] as const).forEach((strategyId) => {
+      const path = paths[strategyId] || [];
+
+      expect(countMidRouteLandCrossings(path, start, target)).toBe(0);
+    });
+  });
+
   const simulateAutoNavigation = (
     start: Position,
     targetPosition: Position,

@@ -194,6 +194,11 @@ const x = Math.floor(((clientX - rect.left) / rect.width) * WORLD_MAP_COLUMNS);
 const y = Math.floor(((clientY - rect.top) / rect.height) * WORLD_MAP_ROWS);
 ```
 
+**画航线要处理东西接缝。** 世界横向环绕，但 `toMapPosition()` 是线性映射，没有环绕概念。
+一条跨太平洋的航线相邻两点可能一个贴右缘、一个贴左缘；直接 `lineTo` 会画成一条横贯整图的
+直线。`drawPath()` 因此检测相邻两点的 map-x 跳变：若超过半张图宽（`MAP_WIDTH / 2`），说明
+这段是跨接缝的短跳，按真实环绕量 `dx - sign(dx) * MAP_WIDTH` 拆成两段，分别从左右两边出画。
+
 ### 3. 地球经纬度（lat/lng）
 
 世界地图近似**等距圆柱投影**，所以经纬度和世界格坐标近似线性关系。换算实现在

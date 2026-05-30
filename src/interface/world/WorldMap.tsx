@@ -222,12 +222,28 @@ const drawPath = (
   context.beginPath();
 
   path.forEach((pathPosition, i) => {
-    const { x, y } = toMapPosition(pathPosition);
+    const point = toMapPosition(pathPosition);
 
     if (i === 0) {
-      context.moveTo(x, y);
+      context.moveTo(point.x, point.y);
+      return;
+    }
+
+    const previous = toMapPosition(path[i - 1]);
+    const dx = point.x - previous.x;
+
+    // The world wraps east-west, so a map-x jump wider than half the map is
+    // really a short hop across the seam (e.g. the Pacific between Alaska and
+    // Siberia). Drawing it straight would streak a horizontal line back across
+    // the whole map; instead draw two segments that run off opposite edges.
+    if (Math.abs(dx) > MAP_WIDTH / 2) {
+      const wrappedDx = dx - Math.sign(dx) * MAP_WIDTH;
+
+      context.lineTo(previous.x + wrappedDx, point.y);
+      context.moveTo(point.x - wrappedDx, previous.y);
+      context.lineTo(point.x, point.y);
     } else {
-      context.lineTo(x, y);
+      context.lineTo(point.x, point.y);
     }
   });
 
