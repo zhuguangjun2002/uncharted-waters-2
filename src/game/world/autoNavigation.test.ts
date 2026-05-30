@@ -273,6 +273,102 @@ describe('auto navigation simulation', () => {
     });
   });
 
+  test('deep route threads the narrow Stockholm channel without getting stuck', () => {
+    // Tile-resolution path through the concave archipelago channel north of the
+    // pinch the deep search threads on the way to Stockholm. Before the fix the
+    // ship wedged against the coast around (977, 229): several tile-dense
+    // waypoints fell inside the reach radius, so it skipped the channel and
+    // tried to cut the corner straight across land toward a waypoint past the
+    // pinch.
+    const start = { x: 970, y: 215 };
+    const target = { x: 1016, y: 196 };
+    const path = findSeaPath({
+      start,
+      target,
+      isSea: isWorldSea,
+      gridSize: 1,
+      useCoastPenalty: false,
+    });
+
+    expect(path.length).toBeGreaterThan(0);
+    expect(path[path.length - 1]).toEqual(target);
+
+    const autoNavigation: AutoNavigationState = {
+      enabled: true,
+      targetPortId: '38',
+      targetPosition: target,
+      strategyId: 'deep',
+      path,
+      waypointIndex: 0,
+      lastPosition: null,
+      stagnantMoves: 0,
+      useAlternateAxis: false,
+      debug: null,
+    };
+
+    let position = { ...start };
+    let stagnantMoves = 0;
+
+    for (let i = 0; i < 8000; i += 1) {
+      const {
+        heading,
+        waypointIndex,
+        arrived,
+        lastPosition,
+        stagnantMoves: autoNavigationStagnantMoves,
+        useAlternateAxis,
+        newPath,
+        debug,
+      } = getAutoNavigationHeading(position, autoNavigation);
+
+      autoNavigation.waypointIndex = waypointIndex;
+      autoNavigation.lastPosition = lastPosition;
+      autoNavigation.stagnantMoves = autoNavigationStagnantMoves;
+      autoNavigation.useAlternateAxis = useAlternateAxis;
+      autoNavigation.debug = debug;
+      if (newPath) {
+        autoNavigation.path = newPath;
+      }
+
+      if (arrived) {
+        expect(distance(position, target)).toBeLessThan(12);
+        return;
+      }
+
+      if (!heading) {
+        throw Error(
+          `Auto navigation returned no heading at step ${i}, position ${JSON.stringify(
+            position,
+          )}`,
+        );
+      }
+
+      const destination = move(position, heading);
+      const nextPosition = {
+        x: getXWrapAround(destination.x),
+        y: destination.y,
+      };
+
+      if (distance(position, nextPosition) < 0.001) {
+        stagnantMoves += 1;
+      } else {
+        stagnantMoves = 0;
+      }
+
+      if (stagnantMoves >= 60) {
+        throw Error(
+          `Auto navigation stuck at step ${i}, position ${JSON.stringify(
+            position,
+          )}, waypoint ${JSON.stringify(autoNavigation.path[waypointIndex])}`,
+        );
+      }
+
+      position = nextPosition;
+    }
+
+    throw Error('Auto navigation did not arrive within 8000 simulated steps');
+  });
+
   test('Lisbon to Hormuz does not get stuck', () => {
     let position = { x: 838, y: 358 };
     const targetPosition = { x: 1240, y: 448 };

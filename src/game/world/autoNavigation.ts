@@ -540,6 +540,34 @@ const getDistance = (from: Position, to: Position) => {
   return Math.sqrt(dx * dx + dy * dy);
 };
 
+// Samples the straight line between two world positions and returns false if any
+// sampled point is land. Used to decide whether the ship can head directly from
+// one position to another without cutting a corner across the coast.
+const isSegmentSea = (
+  from: Position,
+  to: Position,
+  isSea: (position: Position) => boolean,
+) => {
+  const xDelta = getFromToAccountingForWrapAround(from.x, to.x);
+  const yDelta = to.y - from.y;
+  const steps = Math.max(Math.abs(xDelta), Math.abs(yDelta), 1);
+
+  for (let step = 1; step <= steps; step += 1) {
+    const t = step / steps;
+
+    if (
+      !isSea({
+        x: getXWrapAround(from.x + xDelta * t),
+        y: from.y + yDelta * t,
+      })
+    ) {
+      return false;
+    }
+  }
+
+  return true;
+};
+
 const isOpenSeaForWaypointReach = (position: Position) =>
   getCoastPenalty(position, isWorldSea) === 0;
 
@@ -900,6 +928,29 @@ export const getAutoNavigationHeading = (
     getDistance(position, autoNavigation.path[waypointIndex]) <=
       getReachedDistance(position, waypointIndex, autoNavigation)
   ) {
+    // Deep-route waypoints are tile-dense, so near a concave coastline several
+    // of them can fall inside the reach radius at once. Blindly skipping to a
+    // later waypoint then lets the ship try to cut the corner straight across
+    // land and wedge against the coast (e.g. the narrow channel approaching
+    // Stockholm). Only skip a waypoint that is still several px away (absorbed
+    // by the large reach radius) when the straight line from the ship to the
+    // next waypoint stays on open water; otherwise stop and thread the channel
+    // waypoint by waypoint. A waypoint the ship is essentially sitting on is
+    // always advanced past so it never stalls inside the heading dead zone.
+    const nextWaypoint = autoNavigation.path[waypointIndex + 1];
+    const onWaypoint =
+      getDistance(position, autoNavigation.path[waypointIndex]) <=
+      DIRECTION_DEAD_ZONE * Math.SQRT2;
+
+    if (
+      autoNavigation.strategyId === 'deep' &&
+      nextWaypoint &&
+      !onWaypoint &&
+      !isSegmentSea(position, nextWaypoint, isWorldSea)
+    ) {
+      break;
+    }
+
     waypointIndex += 1;
     stagnantMoves = 0;
     useAlternateAxis = false;
