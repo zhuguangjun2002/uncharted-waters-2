@@ -734,11 +734,17 @@ describe('auto navigation simulation', () => {
   test('deep route from Nome to Santa Barbara threads the island chain', async () => {
     const start = positionAdjacentToPort('118');
     const target = positionAdjacentToPort('123');
-    const { promise } = findDeepRoutePath(start, target, () => {});
+    let reportedNodes = 0;
+    const { promise } = findDeepRoutePath(start, target, (nodes) => {
+      reportedNodes = nodes;
+    });
     const path = await promise;
 
     expect(path.length).toBeGreaterThan(0);
     expect(path[path.length - 1]).toEqual(target);
+    // Even though this open-water route resolves inside the first chunk, the
+    // final node tally must be reported (the F4 status showed "0 nodes" before).
+    expect(reportedNodes).toBeGreaterThan(0);
 
     const result = simulateAutoNavigation(start, target, path, 'deep');
 

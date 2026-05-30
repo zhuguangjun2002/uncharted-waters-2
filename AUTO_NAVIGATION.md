@@ -939,6 +939,34 @@ Changan 那块断开内湾导致长途段连不过去。启发式距离（octile
 - `npx tsc --noEmit`（仅剩两处与本改动无关的既有 `columns` 未使用告警）。
 - `npm run lint`（三个改动文件均无问题）。
 
+## Bug 记录：深度搜索完成却显示“共探索 0 个节点”
+
+记录日期：2026-05-30
+
+问题现象：
+
+- 对开阔水域的深度搜索（如 Nome → Santa Barbara），结果提示“找到航线”，但节点计数是
+  **0**。航线本身是好的，0 只是计数错了。
+
+根因：
+
+- `createChunkedSeaSearch` 的 `onProgress(totalSearched)` 只在**两个 chunk 之间**回报
+  （每跑满 3000 个节点才报一次）。当搜索在**第一个 chunk 内**就到达目标（开阔水域的短程
+  深度路线常如此），它直接 `resolve`，`onProgress` 一次都没触发，F4 的 `finalNodes` 留在 0。
+
+修复方法：
+
+- 在 `createChunkedSeaSearch` 内把所有 `resolve(...)` 包进 `finish(...)`：先
+  `onProgress(totalSearched)` 再 resolve，保证**每次退出**（到达目标、耗尽、abort）都回报最终
+  节点数。多阶段（forward/backward/channel）经由 `baseNodes + nodes` 包装累加，末阶段回报的
+  即为总数。
+
+验证：
+
+- `deep route from Nome to Santa Barbara threads the island chain` 测试新增断言
+  `reportedNodes > 0`，确认首个 chunk 内完成时也能报出真实节点数。
+- `autoNavigation.test.ts` 全部 26 项通过；`npm run lint`、`npx tsc --noEmit` 干净。
+
 ## 测试建议
 
 每次修改自动导航后至少运行：

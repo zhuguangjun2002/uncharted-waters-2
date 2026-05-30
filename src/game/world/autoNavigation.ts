@@ -1247,9 +1247,18 @@ const createChunkedSeaSearch = (
       .map((gp) => gridToPosition(gp, columns, rows, gridSize));
 
   const promise = new Promise<ChunkedSeaSearchResult>((resolve) => {
+    // Report the final tally on every exit, not just between chunks. A search
+    // that reaches its target inside the first chunk (e.g. an open-water deep
+    // route like Nome -> Santa Barbara) otherwise never fires onProgress and the
+    // F4 status shows "0 nodes" even though it did real work.
+    const finish = (result: ChunkedSeaSearchResult) => {
+      onProgress(totalSearched);
+      resolve(result);
+    };
+
     const runChunk = () => {
       if (aborted) {
-        resolve({ path: [], reachedTarget: false, searchedNodes: totalSearched });
+        finish({ path: [], reachedTarget: false, searchedNodes: totalSearched });
         return;
       }
 
@@ -1274,7 +1283,7 @@ const createChunkedSeaSearch = (
             const path = buildPath(currentKey);
 
             if (!path.length) {
-              resolve({
+              finish({
                 path: [],
                 reachedTarget: false,
                 searchedNodes: totalSearched,
@@ -1282,7 +1291,7 @@ const createChunkedSeaSearch = (
               return;
             }
 
-            resolve({
+            finish({
               path: path.concat(target),
               reachedTarget: true,
               searchedNodes: totalSearched,
@@ -1355,13 +1364,13 @@ const createChunkedSeaSearch = (
 
       if (openHeap.size === 0 || totalSearched >= maxNodes) {
         if (returnClosestOnExhaust && closestKey !== startKey) {
-          resolve({
+          finish({
             path: buildPath(closestKey),
             reachedTarget: false,
             searchedNodes: totalSearched,
           });
         } else {
-          resolve({ path: [], reachedTarget: false, searchedNodes: totalSearched });
+          finish({ path: [], reachedTarget: false, searchedNodes: totalSearched });
         }
 
         return;
