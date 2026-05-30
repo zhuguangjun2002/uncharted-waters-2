@@ -1076,3 +1076,48 @@ npm run build
   [src/game/world/autoNavigation.test.ts](/home/laozhu/project/uncharted-waters-2/src/game/world/autoNavigation.test.ts)
   的 `Lisbon to Mombasa preview at production budget finds offshore and balanced routes`。
 - TODO 1、TODO 4 实测后判断不必再做，已标记关闭。
+
+---
+
+## 批量航线审计工具（npm run audit:navigation）
+
+自动导航的失败很少是单点 bug，而是某一类海峡 / 群岛 / 港口入口 / 粗网格连通性问题。
+手写回归用例（`autoNavigation.test.ts`）只能覆盖少数挑选过的航线，会漏掉整片地图。
+批量审计工具对大量港口对做"地图级健康检查"，把失败收敛成结构化报告，便于再蒸馏成针对性单元测试。
+
+实现：
+
+- [src/game/world/navigationAudit.ts](src/game/world/navigationAudit.ts)：纯审计引擎。
+  - `findWaypointsOnLand` / `findMidRouteLandCrossings`：可注入 `isSea`，无需加载 tilemap 即可单测。
+  - `simulateFollow`：用真实世界碰撞模型（`createMap` 世界态 `collisionAt`）回放真实跟随器。
+  - `auditRoute` / `auditPortsAgainstAnchors` / `formatReportMarkdown`：单条 / 批量 / 报告渲染。
+- [src/game/world/navigationAudit.audit.ts](src/game/world/navigationAudit.audit.ts)：jest 驱动的运行器
+  （由 `jest.audit.config.js` 匹配 `*.audit.ts`，**不**随 `npm test` 运行）。
+- [src/game/world/navigationAudit.test.ts](src/game/world/navigationAudit.test.ts)：引擎纯函数单测。
+
+每条航线检查：路径是否找到、每个 waypoint 是否落在可通行海面、相邻 waypoint 段是否穿陆、
+（可选）真实跟随器是否到达而不卡死。靠近起终点的 waypoint / 段会按 48px 半径豁免（港口进近不可避免贴岸）。
+
+用法：
+
+```bash
+npm run audit:navigation                 # 全部港口 × 代表锚点港，balanced 策略，静态检查
+AUDIT_SIMULATE=1 npm run audit:navigation # 额外回放真实跟随器（慢）
+AUDIT_STRATEGY=offshore npm run audit:navigation
+AUDIT_LIMIT=6 npm run audit:navigation   # 只取前 6 个起点港做快速冒烟
+AUDIT_FULL=1 npm run audit:navigation    # 全港口 × 全港口（很慢）
+```
+
+环境变量：`AUDIT_STRATEGY`（balanced/detailed/offshore/deep）、`AUDIT_SIMULATE`、`AUDIT_FULL`、
+`AUDIT_ANCHORS`、`AUDIT_ORIGINS`、`AUDIT_LIMIT`、`AUDIT_MAX_NODES`（默认 200000）、
+`AUDIT_COAST`（默认关，连通性 / 穿陆检查不需要海岸惩罚，关掉更快）、`AUDIT_OUT`。
+报告写到 `navigation-audit-report.md` 和 `.json`（已 gitignore）。
+
+注意 / 设计取舍：
+
+- 真实规划是**无预算同步 A\***（见 `claude-plan-v1.md` P0-B / 2.2）。批量扫描若照搬会在
+  无法以粗网格连通的航线上把整片海洋灌满而 OOM，所以审计默认给搜索设上限并关闭海岸惩罚；
+  npm 脚本也用 `--max-old-space-size=4096` 抬高堆。
+- 因此被审计为 `no-path` 的航线里，既有真正不可达的，也有"在该预算 / 该策略下找不到"的——
+  例如 Seville、Changan 这类窄水道港口起讫点，`balanced` 粗网格无法脱离进近水道，需要 `deep`。
+  这正是审计要暴露的一类问题，而非工具误报。

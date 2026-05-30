@@ -8,6 +8,7 @@
     "lint": "eslint src/ --ext .ts --ext .tsx",
     "prettier": "prettier --write src/ tests/",
     "test": "jest",
+    "audit:navigation": "NODE_OPTIONS=--max-old-space-size=4096 jest --config jest.audit.config.js --runInBand",
     "test:e2e": "npm run build && (http-server build --silent & cypress run --browser chrome kill $!)",
     "test:e2e-firefox": "npm run build && (http-server build --silent & cypress run --browser firefox kill $!)",
     "test:e2e-edge": "npm run build && (http-server build --silent & cypress run --browser edge kill $!)",
