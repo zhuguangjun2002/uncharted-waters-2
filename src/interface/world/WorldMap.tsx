@@ -726,14 +726,22 @@ export default function WorldMap({ position, autoNavigation }: Props) {
   const currentLatLng = worldToLatLng(position);
 
   return (
-    <div className="absolute inset-0 z-10 flex items-center justify-center bg-black/80">
+    // items-start + overflow so a panel taller than the viewport scrolls instead
+    // of centring — centring clipped the top of the map (the Arctic / northern
+    // Canada) off-screen, worst during auto-navigation when the extra progress
+    // panel makes the overlay tallest.
+    <div className="absolute inset-0 z-10 flex items-start justify-center overflow-y-auto bg-black/80 p-4">
       <div className="border-4 border-slate-300 bg-black p-4 text-slate-200">
         {/* eslint-disable-next-line jsx-a11y/no-noninteractive-element-interactions */}
         <canvas
           ref={canvasRef}
           width={MAP_WIDTH}
           height={MAP_HEIGHT}
-          className={`w-[1080px] h-[540px] ${clickTeleport ? 'cursor-crosshair' : ''}`}
+          // Cap to the viewport (preserving the 2:1 aspect) so the whole map
+          // stays visible on short or narrow screens.
+          className={`block aspect-[2/1] h-auto w-[1080px] max-w-[92vw] ${
+            clickTeleport ? 'cursor-crosshair' : ''
+          }`}
           onClick={handleMapClick}
         />
         <div className="mt-3 flex items-center gap-3 text-xl">
