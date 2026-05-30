@@ -726,6 +726,35 @@ describe('auto navigation simulation', () => {
     },
   );
 
+  // Nome to Santa Barbara crosses a Pacific island chain. The coarse balanced /
+  // offshore followers wedge in a concave island bay there (their greedy
+  // waypoint follower cannot back out of a pocket), so this long archipelago
+  // route belongs to the deep strategy: its tile-dense path plus local A* detour
+  // thread the islands and reach the port.
+  test('deep route from Nome to Santa Barbara threads the island chain', async () => {
+    const start = positionAdjacentToPort('118');
+    const target = positionAdjacentToPort('123');
+    const { promise } = findDeepRoutePath(start, target, () => {});
+    const path = await promise;
+
+    expect(path.length).toBeGreaterThan(0);
+    expect(path[path.length - 1]).toEqual(target);
+
+    const result = simulateAutoNavigation(start, target, path, 'deep');
+
+    if (result.status === 'stuck') {
+      throw Error(
+        `Auto navigation stuck at step ${result.steps}, position ${JSON.stringify(
+          result.position,
+        )}, waypoint #${result.waypointIndex} ${JSON.stringify(
+          result.waypoint,
+        )}, debug ${JSON.stringify(result.debug)}`,
+      );
+    }
+
+    expect(result.status).toBe('arrived');
+  }, 120000);
+
   describe('narrow-channel ports (Lushun -> Changan)', () => {
     // Changan (port 98) sits at the end of a 1-tile-wide channel. The coarse
     // grids can't represent it, so only tile resolution finds the route.

@@ -794,25 +794,25 @@ export default function WorldMap({ position, autoNavigation }: Props) {
           >
             {previewStatus === 'calculating' ? '计算中' : '预览航线'}
           </button>
-          {(previewStatus === 'failed' ||
-            deepRouteStatus === 'computing' ||
-            deepRouteStatus === 'ready' ||
-            deepRouteStatus === 'failed') && (
-            <button
-              className={`border px-3 py-1 text-base disabled:text-slate-500 ${getDeepRouteButtonClassName(
-                deepRouteStatus,
-              )}`}
-              disabled={deepRouteStatus === 'computing'}
-              type="button"
-              onClick={
-                deepRouteStatus === 'computing'
-                  ? handleCancelDeepRoute
-                  : handleDeepRoute
-              }
-            >
-              {getDeepRouteButtonLabel(deepRouteStatus)}
-            </button>
-          )}
+          {/* Always offer the deep search: a coarse preview can "succeed" yet
+              still route the greedy follower into an island bay it can't back
+              out of (e.g. Nome -> Santa Barbara through the Pacific chain). The
+              deep route's tile-dense path and local A* detour thread those, so
+              the player needs access to it even when a preview line exists. */}
+          <button
+            className={`border px-3 py-1 text-base disabled:text-slate-500 ${getDeepRouteButtonClassName(
+              deepRouteStatus,
+            )}`}
+            disabled={deepRouteStatus === 'computing'}
+            type="button"
+            onClick={
+              deepRouteStatus === 'computing'
+                ? handleCancelDeepRoute
+                : handleDeepRoute
+            }
+          >
+            {getDeepRouteButtonLabel(deepRouteStatus)}
+          </button>
           <button
             className="border border-slate-500 px-3 py-1 text-base hover:bg-slate-800"
             type="button"

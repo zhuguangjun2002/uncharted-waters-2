@@ -309,6 +309,16 @@ const getCoastPenalty = (
   return 0;
 };
 
+// Hoisted so the hot path (coast-penalty ring scans call this thousands of
+// times per navigation frame) doesn't allocate a fresh array of points on every
+// invocation.
+const SHIP_TILE_OFFSETS = [
+  { x: 0, y: 0 },
+  { x: 1, y: 0 },
+  { x: 0, y: 1 },
+  { x: 1, y: 1 },
+];
+
 export const isWorldSea = ({ x, y }: Position) => {
   if (y < 0 || y + 1 >= WORLD_MAP_ROWS) {
     return false;
@@ -320,14 +330,7 @@ export const isWorldSea = ({ x, y }: Position) => {
     return false;
   }
 
-  const offsets = [
-    { x: 0, y: 0 },
-    { x: 1, y: 0 },
-    { x: 0, y: 1 },
-    { x: 1, y: 1 },
-  ];
-
-  return offsets.every((offset) => {
+  return SHIP_TILE_OFFSETS.every((offset) => {
     const tileX = getXWrapAround(Math.floor(x) + offset.x);
     const tileY = Math.floor(y) + offset.y;
     const tile = worldTilemap[tileY * WORLD_MAP_COLUMNS + tileX] || 0;
