@@ -66,12 +66,74 @@ const portOptions = regularPorts
     })),
   );
 
-// Polar ice/snow tiles. These land-value tiles appear only at high latitudes
-// (the temperate/tropical continents use entirely different tile values), so
-// the world view draws them as white ice. The minimap, which otherwise lumps
-// every land tile into one green, paints them white too so the Arctic and
-// Antarctic read as ice instead of looking like ordinary land.
-const ICE_TILES = new Set([73, 74, 75, 81]);
+// The tileset packs every world tile value across its columns (one tile per
+// 8-bit value), with each row a time-of-day variant; row 0 is midday.
+const TILE_VALUE_COUNT = 128;
+const DAYTIME_TILESET_ROW = 0;
+
+// Average midday colour of each tile value, sampled straight from the tileset.
+// Driving the minimap off the real tile colours makes it a faithful low-res map
+// (ice white, desert tan, forest green, sea blue) instead of guessing land vs
+// sea — and vs ice — from tile-value ranges, which mis-painted temperate land
+// (e.g. southern Australia) as ice. Built once and cached.
+let tilePalette: number[][] | null = null;
+
+const buildTilePalette = (): number[][] | null => {
+  const tileset = Assets.images('worldTileset');
+
+  if (!tileset) {
+    return null;
+  }
+
+  try {
+    const tileSize = Math.floor(tileset.width / TILE_VALUE_COUNT);
+    const context = tileset.getContext('2d')!;
+    const { data } = context.getImageData(
+      0,
+      DAYTIME_TILESET_ROW * tileSize,
+      tileset.width,
+      tileSize,
+    );
+    const palette: number[][] = [];
+
+    for (let tile = 0; tile < TILE_VALUE_COUNT; tile += 1) {
+      let r = 0;
+      let g = 0;
+      let b = 0;
+      const pixelCount = tileSize * tileSize;
+
+      for (let yOffset = 0; yOffset < tileSize; yOffset += 1) {
+        for (let xOffset = 0; xOffset < tileSize; xOffset += 1) {
+          const offset =
+            (yOffset * tileset.width + tile * tileSize + xOffset) * 4;
+
+          r += data[offset];
+          g += data[offset + 1];
+          b += data[offset + 2];
+        }
+      }
+
+      palette[tile] = [
+        Math.round(r / pixelCount),
+        Math.round(g / pixelCount),
+        Math.round(b / pixelCount),
+      ];
+    }
+
+    return palette;
+  } catch {
+    // getImageData can throw on a tainted canvas; fall back to flat colours.
+    return null;
+  }
+};
+
+const getTilePalette = (): number[][] | null => {
+  if (!tilePalette) {
+    tilePalette = buildTilePalette();
+  }
+
+  return tilePalette;
+};
 
 const toMapPosition = ({ x, y }: Position) => ({
   x: Math.floor((x / WORLD_MAP_COLUMNS) * MAP_WIDTH),
@@ -98,6 +160,7 @@ const getPreviewSearchBudget = (from: Position, to: Position) => {
 const drawBaseMap = (context: CanvasRenderingContext2D) => {
   const imageData = context.createImageData(MAP_WIDTH, MAP_HEIGHT);
   const worldTilemap = Assets.data('worldTilemap');
+  const palette = getTilePalette();
 
   for (let y = 0; y < MAP_HEIGHT; y += 1) {
     for (let x = 0; x < MAP_WIDTH; x += 1) {
@@ -105,12 +168,16 @@ const drawBaseMap = (context: CanvasRenderingContext2D) => {
       const worldY = Math.floor((y / MAP_HEIGHT) * WORLD_MAP_ROWS);
       const tile = worldTilemap[worldY * WORLD_MAP_COLUMNS + worldX] || 0;
       const offset = (y * MAP_WIDTH + x) * 4;
+      const color = palette?.[tile];
 
-      if (ICE_TILES.has(tile)) {
-        imageData.data[offset] = 226;
-        imageData.data[offset + 1] = 238;
-        imageData.data[offset + 2] = 245;
+      if (color) {
+        const [r, g, b] = color;
+
+        imageData.data[offset] = r;
+        imageData.data[offset + 1] = g;
+        imageData.data[offset + 2] = b;
       } else if (tile >= 50) {
+        // Fallback when the tileset can't be sampled: flat land green.
         imageData.data[offset] = 34;
         imageData.data[offset + 1] = 90;
         imageData.data[offset + 2] = 64;
