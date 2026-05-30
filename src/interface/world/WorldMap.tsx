@@ -66,6 +66,13 @@ const portOptions = regularPorts
     })),
   );
 
+// Polar ice/snow tiles. These land-value tiles appear only at high latitudes
+// (the temperate/tropical continents use entirely different tile values), so
+// the world view draws them as white ice. The minimap, which otherwise lumps
+// every land tile into one green, paints them white too so the Arctic and
+// Antarctic read as ice instead of looking like ordinary land.
+const ICE_TILES = new Set([73, 74, 75, 81]);
+
 const toMapPosition = ({ x, y }: Position) => ({
   x: Math.floor((x / WORLD_MAP_COLUMNS) * MAP_WIDTH),
   y: Math.floor((y / WORLD_MAP_ROWS) * MAP_HEIGHT),
@@ -99,7 +106,11 @@ const drawBaseMap = (context: CanvasRenderingContext2D) => {
       const tile = worldTilemap[worldY * WORLD_MAP_COLUMNS + worldX] || 0;
       const offset = (y * MAP_WIDTH + x) * 4;
 
-      if (tile >= 50) {
+      if (ICE_TILES.has(tile)) {
+        imageData.data[offset] = 226;
+        imageData.data[offset + 1] = 238;
+        imageData.data[offset + 2] = 245;
+      } else if (tile >= 50) {
         imageData.data[offset] = 34;
         imageData.data[offset + 1] = 90;
         imageData.data[offset + 2] = 64;

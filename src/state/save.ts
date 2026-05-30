@@ -16,8 +16,10 @@ const SAVE_SLOTS_KEY = 'saveSlots';
 
 /*
   The serializable fields of State. Runtime scene objects (`world`, `port`) and
-  derived fields (`wind`, `current`, `playerFleet`, `seaArea`, `autoNavigation`)
-  are intentionally excluded — they're recreated or recomputed on load.
+  derived fields (`wind`, `current`, `playerFleet`, `seaArea`) are intentionally
+  excluded — they're recreated on load. `autoNavigation` is persisted so an
+  in-progress voyage (especially an expensive deep-search route) resumes after a
+  load instead of vanishing.
  */
 type PersistedState = Pick<
   State,
@@ -32,6 +34,7 @@ type PersistedState = Pick<
   | 'debt'
   | 'items'
   | 'mates'
+  | 'autoNavigation'
 >;
 
 interface SaveSlotMeta {
@@ -123,6 +126,9 @@ export const saveToSlot = (index: number): boolean => {
       debt: state.debt,
       items: state.items,
       mates: state.mates,
+      // `debug` is recreated every frame; drop it so saves stay small and free
+      // of stale per-frame diagnostics.
+      autoNavigation: { ...state.autoNavigation, debug: null },
     },
   };
 
@@ -163,7 +169,11 @@ export const loadFromSlot = (index: number): boolean => {
   state.debt = data.debt;
   state.items = data.items;
   state.mates = data.mates;
-  state.autoNavigation = getDefaultAutoNavigation();
+  // Resume an in-progress voyage. Older saves predate this field, so fall back
+  // to a fresh default.
+  state.autoNavigation = data.autoNavigation
+    ? { ...data.autoNavigation, debug: null }
+    : getDefaultAutoNavigation();
 
   // Force the game loop to rebuild the scene for the loaded location.
   state.world = undefined as unknown as World;

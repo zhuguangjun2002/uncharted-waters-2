@@ -288,11 +288,14 @@ const tile = worldTilemap[worldY * WORLD_MAP_COLUMNS + worldX] || 0;
 
 然后用很简单的规则把 tile 转成颜色：
 
-- `tile >= 50`：认为是陆地，画绿色。
+- 极地冰盖 tile（`73`、`74`、`75`、`81`）：画白色。这些 tile 只出现在高纬度，温带/热带
+  大陆用的是另一套 tile 值（`65` 等），所以可以直接按 tile 值判定为冰，不会误染大陆。
+- 其它 `tile >= 50`：认为是陆地，画绿色。
 - `tile < 50`：认为是海洋，画蓝色。
 
 也就是说，这张小图不是把 `worldTileset.png` 的实际画面缩小，而是对
-`worldTilemap.wasm` 做采样，生成一张低保真的海陆分布图。
+`worldTilemap.wasm` 做采样，生成一张低保真的海陆分布图。冰盖单独上白色，是为了让北极/南极
+读起来像冰，而不是和普通陆地混成一片绿（见下文 Bug 记录“F4 小图北极冰盖显示为绿色陆地”）。
 
 ### 当前位置计算
 
@@ -315,6 +318,35 @@ const markerY = Math.floor((y / WORLD_MAP_ROWS) * MAP_HEIGHT);
 - 如果浏览器、系统或笔记本键盘拦截功能键，可能需要先点击游戏画面获得焦点，或按
   `Fn + F4`。
 
+### Bug 记录：F4 小图北极冰盖显示为绿色陆地
+
+记录日期：2026-05-30
+
+问题现象：
+
+- 从 19. Alexandria 用”超远航线”深度搜索导航到 118. Nome（`x=2062, y=156`，靠近北极）。
+- 在 F4 小图上看不出北极的冰盖——整片高纬度区域和普通陆地一样是绿色，分不清哪里是冰、海路怎么穿过去。
+- 原作里北极应该是白色冰层。
+
+根因：
+
+- `drawBaseMap()` 只按 `tile >= 50` 把所有陆地一律画成绿色，没有区分冰盖。
+- 实测 `worldTilemap.wasm` 的 tile 值分布：温带/热带大陆主要是 tile `65`；而 tile `73`/`74`/`75`/`81`
+  **只**出现在高纬度（`73` 北极为主、`81` 南极为主），在温带带（`y` 约 `430–680`）里完全不出现。
+  也就是说这几个值就是冰盖/雪原 tile，世界场景的 tileset 把它们画成白色冰面，小图却把它们当普通陆地。
+
+修复：
+
+- 在 `drawBaseMap()` 里加一组 `ICE_TILES = {73, 74, 75, 81}`，命中时画白色（`rgb(226,238,245)`），
+  其余 `tile >= 50` 仍是绿色、`tile < 50` 仍是蓝色。
+- 因为这些 tile 值在大陆带不出现，按值判定不会误把西伯利亚/加拿大等普通大陆染白；高纬度的雪原/冰盖
+  统一上白，正好对应”北极应该是白色冰层”。
+
+验证：
+
+- 重新打开 F4 小图，北极、南极冰盖显示为白色，海路（蓝）与冰盖（白）清晰可分。
+- `npm run build`、`npm test`（84 项全过）、`npm run lint` 均通过。
+
 ## 存档系统
 
 记录日期：2026-05-29
@@ -336,7 +368,13 @@ interface SaveSlot {
 
 `PersistedState` 只挑选 State 中可序列化的字段（`portId`、`timePassed`、`fleets`、
 `gold`、`quests`、`items`、`mates` 等）。运行时场景对象（`world`、`port`）和派生字段
-（`wind`、`current`、`playerFleet`、`seaArea`、`autoNavigation`）不保存，读档时重建或重算。
+（`wind`、`current`、`playerFleet`、`seaArea`）不保存，读档时重建或重算。
+
+`autoNavigation` **会**保存（含整条 `path` 和 `waypointIndex`），这样进行中的航行——
+尤其是”超远航线”那种计算代价很高的深度搜索路线——读档后能继续，而不是凭空消失。
+保存时会把每帧重建的 `debug` 字段置空（保持存档精简）；读档时同样把 `debug` 复位为 `null`。
+旧存档没有该字段时回退为默认值（`getDefaultAutoNavigation()`）。详见下文 Bug 记录
+“读档/刷新后自动导航航线消失”。
 
 ### 读档（运行时切换）
 
@@ -368,6 +406,42 @@ interface SaveSlot {
 
 - 存档保存在 `localStorage`，仅限单一浏览器，未同步到 server。
 - NPC 舰队位置不在存档范围内。
+
+### Bug 记录：读档/刷新后自动导航航线消失
+
+记录日期：2026-05-30
+
+问题现象：
+
+- 用”超远航线”深度搜索规划了一条很长的航线（如 19. Alexandria → 118. Nome），开始自动导航。
+- 中途存档、刷新页面、再读档后，F4 小图上的航线和导航点全都没了，必须重新跑一遍（很慢的）深度搜索。
+
+根因：
+
+- `PersistedState` 原本**不含** `autoNavigation`，注释说它”读档时重建或重算”。
+- 但 `loadFromSlot()` 实际上只是把 `state.autoNavigation` 复位成 `getDefaultAutoNavigation()`，
+  **既没重建也没重算**——于是进行中的航线直接丢失。
+- 普通预览策略也许还能重算，但深度搜索路线计算代价很高、且常规预览本来就会失败，重算并不现实。
+- 另外游戏启动时不自动读档，所以单纯刷新浏览器=完全重置；只有”存档→读档”这条路径才会保留船位
+  （`fleets`），却偏偏把航线丢了。
+
+修复（让航线随存档一起持久化）：
+
+- 把 `autoNavigation` 加进 `PersistedState`。
+- `saveToSlot()` 保存 `{ ...state.autoNavigation, debug: null }`——`debug` 是每帧重建的诊断信息，
+  置空以保持存档精简、避免存进过期数据。
+- `loadFromSlot()` 改为 `state.autoNavigation = data.autoNavigation ? { ...data.autoNavigation, debug: null } : getDefaultAutoNavigation()`：
+  读档后航线、`waypointIndex`、目标港、策略全部恢复，船从存档时的海上坐标继续按原航线航行；旧存档没有该
+  字段时回退默认值（向后兼容）。
+
+说明（仍是已知限制）：游戏启动不自动读档，所以**不存档**直接刷新浏览器仍会清空一切（含航线）——这属于
+”没有自动存档”这个既有设计，不在本次修复范围。本次只保证”存档→读档”能续航。
+
+验证：
+
+- 新增 `src/state/save.test.ts`：存档→清空→读档后 `autoNavigation`（含 `path`/`waypointIndex`/策略）
+  完整恢复；`debug` 被置空；旧存档（无该字段）回退默认值。3 项均通过。
+- `npm test`（84 项全过）、`npm run lint`、`npm run build` 均通过。
 
 ## 调试传送
 
